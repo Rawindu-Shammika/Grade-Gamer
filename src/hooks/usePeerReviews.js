@@ -12,7 +12,7 @@ export const usePeerReviews = () => {
   
   // Primary active states
   const [activeCategory, setActiveCategory] = useState('Sim Racing');
-  const [selectedTitle, setSelectedTitle] = useState('F1 Game Series');
+  const [selectedTitle, setSelectedTitle] = useState('F1 25');
   const [selectedTeammateId, setSelectedTeammateId] = useState(null);
   
   // Data states

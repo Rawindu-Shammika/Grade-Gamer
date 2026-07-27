@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import useAuth from './hooks/useAuth';
-import HomeDashboard from './components/dashboard/HomeDashboard';
+import Dashboard from './pages/Dashboard';
 import Home from './pages/Home';
 import RootLayout from './layouts/RootLayout';
 import VerifiedProfile from './pages/VerifiedProfile';
@@ -141,7 +141,7 @@ function App() {
       )}
 
       {view === 'dashboard' && user && (
-        <HomeDashboard session={user} logout={logout} />
+        <Dashboard session={user} logout={logout} />
       )}
 
       {view === 'auth' && (
@@ -402,7 +402,7 @@ function App() {
       )}
 
       {/* Footer */}
-      <footer className="w-full max-w-7xl mx-auto px-6 py-5 flex flex-col md:flex-row items-center justify-between border-t border-white/5 gap-4 mt-auto">
+      <footer className="w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16 py-5 flex flex-col md:flex-row items-center justify-between border-t border-white/5 gap-4 mt-auto">
         <p className="text-[10px] text-slate-500 font-medium">
           © {new Date().getFullYear()} GradeGamer Platform. All rights reserved.
         </p>

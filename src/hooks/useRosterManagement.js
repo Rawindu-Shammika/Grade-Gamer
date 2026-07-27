@@ -59,6 +59,27 @@ export const useRosterManagement = () => {
       return { success: false, error: 'Please add at least one player to the roster.' };
     }
 
+    // Check 1-roster limit per game title for the user
+    try {
+      const { data: userTeamsForGame, error: checkErr } = await supabase
+        .from('teams')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('game_title', selectedTitle);
+
+      if (checkErr) throw checkErr;
+
+      if (userTeamsForGame && userTeamsForGame.length > 0) {
+        return { 
+          success: false, 
+          error: `Roster Limit Exceeded: You can only create one team roster per game title ("${selectedTitle}"). Delete your existing roster for this title to establish a new one.` 
+        };
+      }
+    } catch (err) {
+      console.error('Failed to verify roster limits check:', err);
+      return { success: false, error: 'Authorization validation check failed. Please try again.' };
+    }
+
     // Resolve max slots capacity rule constraints
     const limits = GAME_ROSTER_SCHEMAS[selectedTitle] || { maxSlots: 5, defaultRoleLabel: 'Active Player' };
     
@@ -111,15 +132,42 @@ export const useRosterManagement = () => {
     }
   };
 
+  // Creator-Only Delete Roster Action
+  const deleteRoster = async (teamId) => {
+    if (!user?.id) {
+      return { success: false, error: 'User session offline.' };
+    }
+    try {
+      // Delete child associations first
+      await supabase.from('team_rosters').delete().eq('team_id', teamId);
+      
+      const { error: teamErr } = await supabase
+        .from('teams')
+        .delete()
+        .eq('id', teamId)
+        .eq('user_id', user.id); // Guard constraint: only creator can delete
+
+      if (teamErr) throw teamErr;
+
+      await fetchRosters();
+      return { success: true };
+    } catch (err) {
+      console.error('Roster deletion query failed:', err);
+      return { success: false, error: err.message || 'Failed to remove roster records.' };
+    }
+  };
+
   return {
     activeCategory,
     setActiveCategory,
     selectedTitle,
     setSelectedTitle,
     existingRosters,
+    setExistingRosters,
     isLoading,
     error,
     createRoster,
+    deleteRoster,
     refreshRosters: fetchRosters
   };
 };

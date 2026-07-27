@@ -1,7 +1,13 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import useAuth from '../hooks/useAuth';
 import { useVerifiedProfileData } from '../hooks/useVerifiedProfileData';
-import { ShieldCheck, Cpu, RefreshCw, AlertTriangle, Layers, Award, Terminal } from 'lucide-react';
+import { ShieldCheck, RefreshCw, AlertTriangle, Layers, Award, Terminal } from 'lucide-react';
+import { getUiImageUrl } from '../utils/supabaseAssets';
+
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
+const SUPABASE_UI_BASE = `${cleanUrl}/storage/v1/object/public/UI`;
+const RESUME_BANNERS = ['DOTA iii.avif', 'VALORANT i.jpg', 'DOTA i.webp'];
 
 /**
  * VerifiedProfile Page Component (Slice 3: Verified Career Resume Generator)
@@ -12,6 +18,16 @@ import { ShieldCheck, Cpu, RefreshCw, AlertTriangle, Layers, Award, Terminal } f
 export const VerifiedProfile = () => {
   const { user } = useAuth();
   const { resumeData, isLoading, error } = useVerifiedProfileData(user?.id);
+  const [bannerIndex, setBannerIndex] = useState(0);
+
+  const handleNextBanner = useCallback(() => {
+    setBannerIndex((prev) => (prev + 1) % RESUME_BANNERS.length);
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(handleNextBanner, 10000);
+    return () => clearInterval(timer);
+  }, [handleNextBanner]);
 
   if (isLoading) {
     return (
@@ -36,47 +52,82 @@ export const VerifiedProfile = () => {
   }
 
   const cardClass = 'bg-[#121620] border border-slate-800 p-6 md:p-8 rounded-2xl shadow-xl space-y-5 relative overflow-hidden';
-  const headerAccent = 'border-l-4 border-cyan-500 pl-4 py-1';
 
   return (
-    <div className="bg-[#0b0f19] min-h-screen text-slate-200 p-8 font-sans space-y-6 pt-28 pb-16 w-full max-w-7xl mx-auto">
-      
-      {/* Block 1: The Master Header Container */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-6">
-        <div className={`space-y-1.5 ${headerAccent}`}>
-          <span className="text-[10px] font-mono tracking-widest text-[#00b4d8] font-bold uppercase block">
-            PUBLIC PORTFOLIO
-          </span>
-          <h1 className="text-3xl font-black uppercase text-white tracking-tight leading-none">
-            Verified Career Resume
-          </h1>
-          <p className="text-xs text-slate-400 font-medium">
-            ATS-Optimized Graduate Employability Profile
-          </p>
-        </div>
-        
-        {/* Far-Right Neon Tag */}
-        <div className="flex-shrink-0 self-start md:self-center">
-          <div className="border border-cyan-500/30 bg-cyan-950/20 text-[#00b4d8] font-mono px-3 py-1.5 text-xs rounded-xl shadow-[0_0_12px_rgba(6,182,212,0.05)] flex items-center gap-2 select-all">
-            <Cpu className="w-3.5 h-3.5" />
-            <span className="font-semibold">Verified Hash:</span>
-            <span>{resumeData.verifiedHash}</span>
+    <div className="bg-[#0b0f19] min-h-screen text-slate-200 p-8 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16">
+
+      {/* High-tech Backdrop Hero Banner */}
+      <div
+        onClick={handleNextBanner}
+        className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-cyan-500/30 bg-[#111622] shadow-2xl cursor-pointer group mb-8 select-none transition-all hover:border-cyan-400/60"
+      >
+        {/* Animated Background Banner with Top-Focused Framing */}
+        {RESUME_BANNERS.map((banner, index) => (
+          <div
+            key={banner}
+            className={`absolute inset-0 bg-cover bg-[center_top_15%] transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${index === bannerIndex ? 'opacity-40 scale-100' : 'opacity-0 scale-105'
+              }`}
+            style={{ backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})` }}
+          />
+        ))}
+
+        {/* High-Contrast Cyber Overlay Gradients */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#111622]/90 via-[#111622]/60 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#111622] via-transparent to-transparent pointer-events-none" />
+
+        {/* Overlay Content & Controls */}
+        <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-between pointer-events-none min-h-[320px] md:min-h-[400px]">
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 backdrop-blur-md">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              PUBLIC PORTFOLIO
+            </span>
+
+          </div>
+
+          <div className="mt-auto pt-8">
+            <h2 className="text-2xl md:text-4xl font-black text-white tracking-wide uppercase drop-shadow-lg">
+              Verified Career Resume
+            </h2>
+            <p className="text-xs md:text-sm text-slate-200 mt-1.5 max-w-xl drop-shadow-md">
+              Verify dual-career credentials, data translations, and corporate soft skills mapped dynamically to database telemetry records.
+            </p>
+          </div>
+
+          {/* Pagination Indicators */}
+          <div className="flex items-center gap-1.5 pt-4">
+            {RESUME_BANNERS.map((_, idx) => (
+              <div
+                key={idx}
+                className={`h-1.5 rounded-full transition-all duration-300 ${idx === bannerIndex
+                  ? 'w-8 bg-cyan-400 shadow-sm shadow-cyan-400/50'
+                  : 'w-2 bg-slate-700/80'
+                  }`}
+              />
+            ))}
           </div>
         </div>
       </div>
 
       {/* Block 2: The Core Profile Summary Card */}
-      <div className={cardClass}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/60 pb-4">
-          <div className="space-y-1">
-            <h2 className="text-xl font-black text-white uppercase tracking-tight leading-none">
-              {resumeData.fullName}
-            </h2>
-            <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
-              {resumeData.professionalTitle}
-            </p>
+      <div className={`${cardClass} backdrop-blur-md bg-[#121620]/60 border border-slate-800/80 hover:border-cyan-500/30 transition-all duration-300`}>
+        <div className="absolute inset-0 bg-gradient-to-r from-[#121620] via-[#121620]/95 to-transparent pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/60 pb-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#00b4d8] to-cyan-400 border border-cyan-500/30 flex items-center justify-center text-slate-950 font-black text-sm uppercase shadow-lg shadow-cyan-500/10">
+              {resumeData.fullName ? resumeData.fullName.slice(0, 2) : 'GG'}
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                {resumeData.fullName}
+              </h2>
+              <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">
+                {resumeData.professionalTitle}
+              </p>
+            </div>
           </div>
-          
+
           {/* Security Authenticated Indicator Badge */}
           <div className="flex-shrink-0 self-start sm:self-center">
             <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1 rounded-lg text-[9px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5">
@@ -85,15 +136,15 @@ export const VerifiedProfile = () => {
             </span>
           </div>
         </div>
-        
-        <p className="text-xs text-slate-300 leading-relaxed max-w-5xl">
+
+        <p className="text-xs text-slate-300 leading-relaxed max-w-5xl relative z-10">
           {resumeData.summaryParagraph}
         </p>
       </div>
 
       {/* Block 3: The Translation Matrix */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
+
         {/* Left Column: Verified Gaming Telemetry (Sim Racing & Tactical FPS) */}
         <div className="lg:col-span-5 space-y-6">
           <div className="flex items-center gap-2">
@@ -104,10 +155,17 @@ export const VerifiedProfile = () => {
           </div>
 
           <div className="space-y-4">
-            
+
             {/* Row 1: Sim Racing */}
-            <div className="p-5 rounded-xl bg-[#121620]/60 border border-slate-800/80 space-y-3">
-              <div className="flex justify-between items-start">
+            <div className="relative overflow-hidden p-5 rounded-xl bg-[#121620]/60 border border-slate-800/80 space-y-3 group hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-md">
+              {/* Background Game Art Layer */}
+              <div
+                className="absolute inset-0 bg-cover bg-center opacity-5 group-hover:opacity-15 transition-opacity duration-300 pointer-events-none"
+                style={{ backgroundImage: `url(${getUiImageUrl('AC ii.jpg')})` }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#121620]/90 via-[#121620]/95 to-transparent pointer-events-none" />
+
+              <div className="relative z-10 flex justify-between items-start">
                 <span className="text-xs font-black text-white uppercase tracking-wide">
                   Sim Racing (Assetto Corsa / F1)
                 </span>
@@ -115,7 +173,7 @@ export const VerifiedProfile = () => {
                   Active
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-4 text-xs">
+              <div className="relative z-10 grid grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="text-[9px] font-mono text-slate-500 uppercase block tracking-wider">Hours Competed</span>
                   <span className="text-sm font-black text-slate-200">{resumeData.simRacingHours} Hours</span>
@@ -128,8 +186,15 @@ export const VerifiedProfile = () => {
             </div>
 
             {/* Row 2: Tactical FPS */}
-            <div className="p-5 rounded-xl bg-[#121620]/60 border border-slate-800/80 space-y-3">
-              <div className="flex justify-between items-start">
+            <div className="relative overflow-hidden p-5 rounded-xl bg-[#121620]/60 border border-slate-800/80 space-y-3 group hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-md">
+              {/* Background Game Art Layer */}
+              <div
+                className="absolute inset-0 bg-cover bg-center opacity-5 group-hover:opacity-15 transition-opacity duration-300 pointer-events-none"
+                style={{ backgroundImage: `url(${getUiImageUrl('PUBG ii.jpg')})` }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#121620]/90 via-[#121620]/95 to-transparent pointer-events-none" />
+
+              <div className="relative z-10 flex justify-between items-start">
                 <span className="text-xs font-black text-white uppercase tracking-wide">
                   Tactical FPS (CS2 / Valorant)
                 </span>
@@ -137,7 +202,7 @@ export const VerifiedProfile = () => {
                   Active
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-4 text-xs">
+              <div className="relative z-10 grid grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="text-[9px] font-mono text-slate-500 uppercase block tracking-wider">Hours Competed</span>
                   <span className="text-sm font-black text-slate-200">{resumeData.tacticalFpsHours} Hours</span>
@@ -162,7 +227,7 @@ export const VerifiedProfile = () => {
           </div>
 
           <div className="space-y-4">
-            
+
             {/* Skill Card 1 */}
             <div className="p-5 rounded-xl bg-[#121620] border border-slate-800 space-y-1">
               <h4 className="text-xs font-black uppercase text-white tracking-wide">
@@ -207,7 +272,7 @@ export const VerifiedProfile = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-2">
-          
+
           {/* LCC SLOPE INDEX card progress */}
           <div className="space-y-2">
             <div className="flex justify-between items-center text-xs font-semibold">
@@ -217,7 +282,7 @@ export const VerifiedProfile = () => {
               </span>
             </div>
             <div className="w-full h-2 rounded bg-slate-950 overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-gradient-to-r from-cyan-500 to-[#00b4d8] rounded transition-all"
                 style={{ width: `${Math.min(100, Math.max(0, 50 + resumeData.lccSlopeIndex * 4))}%` }}
               ></div>
@@ -236,7 +301,7 @@ export const VerifiedProfile = () => {
               </span>
             </div>
             <div className="w-full h-2 rounded bg-slate-950 overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded transition-all"
                 style={{ width: `${resumeData.peerEvaluationAverage * 10}%` }}
               ></div>

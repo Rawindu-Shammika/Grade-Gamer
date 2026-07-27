@@ -2,7 +2,29 @@ import React, { useState, useEffect } from 'react';
 import LandingPage from '../components/home/LandingPage';
 import { Gamepad2, RefreshCw } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
-import EsportsShowcase from '../components/home/EsportsShowcase';
+
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
+const SUPABASE_ASSETS_BASE = `${cleanUrl}/storage/v1/object/public/assets`;
+
+const SUPABASE_HERO_BASE = `${cleanUrl}/storage/v1/object/public/Hero`;
+
+const HERO_IMAGES = [
+  `${SUPABASE_HERO_BASE}/VALORANT%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/AC%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/AC%20ii.jpg`,
+  `${SUPABASE_HERO_BASE}/DOTA%20iii.webp`,
+  `${SUPABASE_HERO_BASE}/FC%20ii.jpg`,
+  `${SUPABASE_HERO_BASE}/PUBG%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/OVERWATCH%20ii.webp`
+];
+
+const SECTION_IMAGES = {
+  performanceTracking: `${SUPABASE_ASSETS_BASE}/DASHBOARD.png?v=${Date.now()}`,
+  teammateReviews: `${SUPABASE_ASSETS_BASE}/TEAMMATES.webp`,
+  rosterManagement: `${SUPABASE_ASSETS_BASE}/ROSTER%20M.avif`,
+  verifiedResumes: `${SUPABASE_ASSETS_BASE}/PROFILES.png`
+};
 
 const getPublicImageUrl = (fileName) => {
   const { data } = supabase.storage.from('assets').getPublicUrl(fileName);
@@ -35,10 +57,10 @@ export const Home = ({ onAuthClick, onDashboardClick, onViewChange, user, logout
 
         setUiImages({
           heroArt: getPublicImageUrl('hero_art.png'),
-          trackingArt: getPublicImageUrl('tracking_art.png'),
-          reviewArt: getPublicImageUrl('review_art.png'),
-          rosterArt: getPublicImageUrl('roster_art.png'),
-          profileArt: getPublicImageUrl('profile_art.png')
+          trackingArt: SECTION_IMAGES.performanceTracking,
+          reviewArt: SECTION_IMAGES.teammateReviews,
+          rosterArt: SECTION_IMAGES.rosterManagement,
+          profileArt: SECTION_IMAGES.verifiedResumes
         });
       } catch (err) {
         console.error('Error resolving landing page assets:', err);
@@ -78,14 +100,14 @@ export const Home = ({ onAuthClick, onDashboardClick, onViewChange, user, logout
   }
 
   return (
-    <LandingPage 
-      uiImages={uiImages} 
-      onAuthClick={onAuthClick} 
-      onDashboardClick={onDashboardClick} 
+    <LandingPage
+      uiImages={uiImages}
+      onAuthClick={onAuthClick}
+      onDashboardClick={onDashboardClick}
       onViewChange={onViewChange}
       user={user}
       logout={logout}
-      esportsShowcase={<EsportsShowcase />}
+      heroBanners={HERO_IMAGES}
     />
   );
 };

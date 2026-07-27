@@ -5,6 +5,7 @@ import AnalyticsHeader from './AnalyticsHeader';
 import ActiveGamesGrid from './ActiveGamesGrid';
 import IntegrationPanel from './IntegrationPanel';
 import SkillMatrix from './SkillMatrix';
+import DashboardHeroShowcase from './DashboardHeroShowcase';
 import {
   Plus,
   Terminal,
@@ -69,7 +70,10 @@ export const HomeDashboard = ({ session, logout }) => {
   const titles = session?.user_metadata?.titles || session?.user?.user_metadata?.titles || [];
 
   return (
-    <div className="bg-[#0b0f19] text-slate-100 font-sans relative z-10 w-full max-w-7xl mx-auto px-6 pt-24 pb-12 space-y-28 flex-grow">
+    <div className="bg-[#0b0f19] text-slate-100 font-sans relative z-10 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16 pt-24 pb-12 space-y-8 flex-grow">
+
+      {/* Hero Showcase Banner */}
+      <DashboardHeroShowcase />
 
       {/* SECTION A: Welcome Banner Card */}
       <div className="bg-[#121620] border-l-4 border-[#00b4d8] p-6 rounded-r-xl rounded-l-none mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-xl">
