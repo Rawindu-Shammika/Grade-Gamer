@@ -43,72 +43,80 @@ export const DashboardHeroShowcase = () => {
   };
 
   return (
-    <div className="relative w-full h-[320px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl group">
-      {/* Background Slides */}
-      {DASHBOARD_BANNERS.map((banner, index) => (
-        <div
-          key={banner}
-          className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out ${
-            index === currentIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
-          }`}
-          style={{ backgroundImage: `url(${getUiImageUrl(banner)})` }}
-        />
-      ))}
+    <div className="relative w-full h-64 sm:h-72 md:h-80 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl group">
+      
+      {/* Carousel Image Container with Optimized Framing */}
+      <div className="absolute inset-0 w-full h-full overflow-hidden bg-[#070b13]">
+        {DASHBOARD_BANNERS.map((banner, index) => (
+          <img
+            key={banner}
+            src={getUiImageUrl(banner)}
+            alt="Esports Tactical Command"
+            className={`absolute inset-0 w-full h-full object-cover object-[center_20%] transition-all duration-1000 ease-out ${
+              index === currentIndex ? 'opacity-60 scale-100' : 'opacity-0 scale-105 pointer-events-none'
+            }`}
+          />
+        ))}
+      </div>
 
-      {/* Cyber Gradient Overlay */}
+      {/* High-Contrast Gradient Scrim (Leaves artwork visible while keeping text readable) */}
       <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#070b13]/80 via-transparent to-transparent pointer-events-none" />
 
-      {/* Content overlay */}
-      <div className="absolute bottom-0 left-0 p-8 z-10 space-y-2 max-w-lg">
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-cyan-950/80 border border-cyan-500/50 text-cyan-400 uppercase tracking-widest">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          Live Telemetry Portal
-        </span>
-        <h1 className="text-3xl font-black text-white uppercase tracking-tight leading-none">
-          Esports Tactical Command
-        </h1>
-        <p className="text-xs text-slate-300 leading-relaxed font-medium">
-          Monitor scholastic achievements, view roster sync channels, and track gaming translations inside the GradeGamer system.
-        </p>
-      </div>
+      {/* Left & Right Carousel Navigation Arrows */}
+      <button
+        type="button"
+        onClick={handlePrev}
+        className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-slate-900/80 border border-slate-700/80 text-white flex items-center justify-center hover:bg-cyan-500 hover:text-slate-950 transition shadow-lg cursor-pointer opacity-0 group-hover:opacity-100"
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        onClick={handleNext}
+        className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center hover:bg-cyan-300 transition shadow-[0_0_15px_rgba(6,182,212,0.4)] cursor-pointer opacity-0 group-hover:opacity-100"
+      >
+        ›
+      </button>
 
-      {/* Navigation Controls */}
-      <div className="absolute inset-y-0 left-4 right-4 flex items-center justify-between pointer-events-none">
-        <button
-          onClick={handlePrev}
-          className="p-2 rounded-xl bg-[#111622]/80 border border-slate-800/80 text-white hover:bg-cyan-500 hover:border-cyan-400 hover:text-slate-950 transition-all pointer-events-auto cursor-pointer opacity-0 group-hover:opacity-100 shadow-lg"
-          title="Previous slide"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <button
-          onClick={handleNext}
-          className="p-2 rounded-xl bg-[#111622]/80 border border-slate-800/80 text-white hover:bg-cyan-500 hover:border-cyan-400 hover:text-slate-950 transition-all pointer-events-auto cursor-pointer opacity-0 group-hover:opacity-100 shadow-lg"
-          title="Next slide"
-        >
-          <ChevronRight className="w-5 h-5" />
-        </button>
-      </div>
+      {/* Content Layer */}
+      <div className="relative z-10 h-full flex flex-col justify-between p-6 sm:p-10 max-w-2xl">
+        <div className="space-y-2">
+          <span className="px-2.5 py-1 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-widest inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            LIVE TELEMETRY PORTAL
+          </span>
 
-      {/* Play/Pause & Dots Indicator Panel */}
-      <div className="absolute bottom-8 right-8 z-20 flex items-center gap-4">
-        <button
-          onClick={() => setIsPlaying(!isPlaying)}
-          className="p-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-white hover:border-cyan-500 transition-colors pointer-events-auto cursor-pointer"
-        >
-          {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-        </button>
-        <div className="flex items-center gap-1.5">
-          {DASHBOARD_BANNERS.map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => handleDotClick(idx)}
-              className={`w-2.5 h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
-                idx === currentIndex ? 'bg-cyan-400 w-5' : 'bg-slate-700 hover:bg-slate-600'
-              }`}
-              aria-label={`Go to slide ${idx + 1}`}
-            />
-          ))}
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold font-mono text-white uppercase tracking-tight">
+            ESPORTS TACTICAL COMMAND
+          </h1>
+
+          <p className="text-xs font-mono text-slate-300 leading-relaxed max-w-lg">
+            Monitor scholastic achievements, view roster sync channels, and track gaming translations inside the GradeGamer system.
+          </p>
+        </div>
+
+        {/* Carousel Pagination & Pause Controls */}
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => setIsPlaying(!isPlaying)}
+            className="w-6 h-6 rounded-md bg-slate-900/80 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-[10px] font-mono cursor-pointer"
+          >
+            {isPlaying ? '❚❚' : '▶'}
+          </button>
+          <div className="flex items-center gap-1.5">
+            {DASHBOARD_BANNERS.map((_, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleDotClick(idx)}
+                className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                  currentIndex === idx ? 'w-6 bg-cyan-400' : 'w-2 bg-slate-700 hover:bg-slate-500'
+                }`}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </div>

@@ -185,45 +185,71 @@ export const VerifiedProfile = () => {
   return (
     <div className="bg-slate-50 dark:bg-[#0b0f19] min-h-screen text-slate-900 dark:text-slate-200 p-8 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16">
 
-      {/* Action Button Bar */}
-      <div className="flex flex-wrap gap-4 items-center justify-between bg-white dark:bg-[#121620] border border-slate-200 dark:border-slate-800 p-5 rounded-xl shadow-sm dark:shadow-none print-hide">
-        <div className="space-y-0.5">
-          <h4 className="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wider">Verified Resume Actions</h4>
-          <p className="text-[10px] text-slate-600 dark:text-slate-400">Export your authenticated credentials to standard layouts.</p>
+      {/* TOP HERO BANNER (CLEAN - NO EMBEDDED BUTTONS) */}
+      <div className="relative w-full h-48 sm:h-56 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl flex items-center mb-4">
+        {/* Banner Image */}
+        <img
+          src={
+            supabase.storage.from('banners').getPublicUrl('resume-banner.jpg').data.publicUrl ||
+            'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80'
+          }
+          alt="Verified Resume Header Banner"
+          className="w-full h-full object-cover object-[center_35%] absolute inset-0 opacity-80"
+          onError={(e) => {
+            e.target.src =
+              'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80';
+          }}
+        />
+
+        {/* Gradient Scrim */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#070b13]/80 via-transparent to-transparent pointer-events-none" />
+
+        {/* Typography */}
+        <div className="relative z-10 p-6 sm:p-10 space-y-2 max-w-2xl">
+          <span className="px-2.5 py-1 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-widest inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            CRYPTOGRAPHIC CREDENTIAL HUB
+          </span>
+
+          <h1 className="text-2xl sm:text-3xl font-extrabold font-mono text-white uppercase tracking-wide">
+            VERIFIED RESUME MATRIX
+          </h1>
+
+          <p className="text-xs font-mono text-slate-300 leading-relaxed">
+            Export authenticated competitive telemetry, verifiable soft skills, and institutional credentials directly to standard formats.
+          </p>
         </div>
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => setIsEditModalOpen(true)}
-            className="px-4 py-2 rounded-xl border border-cyan-300 dark:border-cyan-500/40 bg-cyan-50 dark:bg-cyan-950/40 text-xs font-mono text-cyan-600 dark:text-cyan-300 hover:bg-cyan-100 dark:hover:bg-cyan-900/50 hover:text-cyan-800 dark:hover:text-white transition flex items-center gap-2 cursor-pointer"
-          >
-            <span>✎</span>
-            <span>EDIT CREDENTIALS</span>
-          </button>
-          <button
-            onClick={handlePrint}
-            className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black py-2.5 px-4 rounded-lg transition-all text-[10px] uppercase tracking-wider cursor-pointer border-none shadow-md shadow-cyan-500/10 flex items-center gap-1.5"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            Print / Save as PDF
-          </button>
-          <button
-            onClick={handleCopyShareLink}
-            className="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold py-2.5 px-4 rounded-lg transition-all text-[10px] uppercase tracking-wider cursor-pointer border border-slate-300 dark:border-slate-700 flex items-center gap-1.5"
-          >
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                Copied Link!
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" />
-                Copy Share Link
-              </>
-            )}
-          </button>
-        </div>
+      </div>
+
+      {/* DEDICATED ACTION TOOLBAR BELOW BANNER */}
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-8 print-hide">
+        <button
+          type="button"
+          onClick={() => setIsEditModalOpen(true)}
+          className="px-4 py-2 rounded-xl border border-cyan-500/40 bg-cyan-950/40 text-xs font-mono font-bold text-cyan-300 hover:bg-cyan-900/50 hover:text-white transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+        >
+          <span>✎</span>
+          <span>EDIT CREDENTIALS</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handlePrint}
+          className="px-5 py-2 rounded-xl bg-cyan-400 text-slate-950 font-mono text-xs font-bold uppercase hover:bg-cyan-300 transition-all shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center gap-2 cursor-pointer"
+        >
+          <span>🖨</span>
+          <span>PRINT / SAVE AS PDF</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCopyShareLink}
+          className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-900/80 text-xs font-mono text-slate-200 hover:text-white hover:border-slate-500 transition-all flex items-center gap-2 cursor-pointer"
+        >
+          <span>🔗</span>
+          <span>{copied ? 'COPIED!' : 'COPY SHARE LINK'}</span>
+        </button>
       </div>
 
       {/* Resume Card template */}
