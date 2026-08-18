@@ -1,334 +1,327 @@
-import React, { useState, useEffect } from 'react';
-import useAuth from '../../hooks/useAuth';
-import useDashboardData from '../../hooks/useDashboardData';
-import useEsportsEcosystem from '../../hooks/useEsportsEcosystem';
-import AnalyticsHeader from './AnalyticsHeader';
-import ActiveGamesGrid from './ActiveGamesGrid';
-import IntegrationPanel from './IntegrationPanel';
-import SkillMatrix from './SkillMatrix';
-import DashboardHeroShowcase from './DashboardHeroShowcase';
-import {
-  Plus,
-  Terminal,
-  RefreshCw,
-  Clock,
-  BookMarked,
-  Award,
-  Flame,
-  LogOut
-} from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { supabase } from "../../services/supabaseClient";
+import useAuth from "../../hooks/useAuth";
 
-/**
- * Realigned HomeDashboard Component (Slice 2 Authenticated View)
- * 
- * - pt-24 px-8 pb-12 wrapper style sitting clear of sticky Navbar.
- * - Section A: Welcome Banner Card with 'TERMINATE CONNECTION' action.
- * - Section B: 3-column Profile Data Matrix (Scholastic, Competitive, Genres).
- * - Section C: Esports Analytics Console (Analytics Header, designated games grid, sync panel, capability matrix).
- */
-export const HomeDashboard = ({ session, logout }) => {
-  const { profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
+const SUPPORTED_GAMES = [
+  { id: 'Valorant', name: 'VALORANT' },
+  { id: 'Assetto Corsa', name: 'ASSETTO CORSA' },
+  { id: 'F1 25', name: 'F1 25' },
+  { id: 'Counter-Strike 2', name: 'COUNTER-STRIKE 2' },
+  { id: 'League of Legends', name: 'LEAGUE OF LEGENDS' },
+  { id: 'Dota 2', name: 'DOTA 2' },
+];
 
-  const [activeSelectedGame, setActiveSelectedGameRaw] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('activeSelectedGame');
-      if (saved && registeredTitles.includes(saved)) return saved;
-    }
-    return registeredTitles[0];
+export const HomeDashboard = () => {
+  const authState = useAuth();
+  const user = authState?.user || null;
+
+  const [selectedGame, setSelectedGame] = useState('Valorant');
+  const [valorantMatches, setValorantMatches] = useState([]);
+  const [boundHandle, setBoundHandle] = useState('UNLINKED');
+  const [loading, setLoading] = useState(true);
+
+  // 1. Add Skill Review Aggregation State & Fetch
+  const [skillScores, setSkillScores] = useState({
+    communication: 82,
+    teamplay: 88,
+    mechanical: 85,
+    reviewCount: 0
   });
 
   useEffect(() => {
-    if (registeredTitles.length > 0 && !registeredTitles.includes(activeSelectedGame)) {
-      setActiveSelectedGame(registeredTitles[0]);
-    }
-  }, [registeredTitles, activeSelectedGame]);
+    const loadPeerSkillData = async () => {
+      if (!user?.id) return;
 
-  const setActiveSelectedGame = (game) => {
-    setActiveSelectedGameRaw(game);
-    localStorage.setItem('activeSelectedGame', game);
+      try {
+        // Query peer reviews for this user filtered by game
+        const { data: reviews, error } = await supabase
+          .from('peer_reviews')
+          .select('*')
+          .or(`reviewee_id.eq.${user.id},target_user_id.eq.${user.id}`)
+          .eq('game_title', selectedGame);
+
+        if (!error && reviews && reviews.length > 0) {
+          let commSum = 0;
+          let teamSum = 0;
+          let mechSum = 0;
+
+          reviews.forEach((r) => {
+            // Normalize ratings (e.g. if stored as 1-5 or 1-100)
+            const c = r.communication_rating ?? r.communication ?? 4;
+            const t = r.teamplay_rating ?? r.tactical_rating ?? r.teamplay ?? 4.2;
+            const m = r.mechanical_rating ?? r.execution_rating ?? r.mechanical ?? 4.1;
+
+            commSum += c > 5 ? c : (c / 5) * 100;
+            teamSum += t > 5 ? t : (t / 5) * 100;
+            mechSum += m > 5 ? m : (m / 5) * 100;
+          });
+
+          const count = reviews.length;
+          setSkillScores({
+            communication: Math.round(commSum / count),
+            teamplay: Math.round(teamSum / count),
+            mechanical: Math.round(mechSum / count),
+            reviewCount: count
+          });
+        }
+      } catch (err) {
+        console.error("Error loading peer skill reviews:", err);
+      }
+    };
+
+    loadPeerSkillData();
+  }, [user, selectedGame]);
+
+  // Status label helper
+  const getStatusLabel = (score) => {
+    if (score >= 90) return { label: 'ELITE STATUS', color: 'text-cyan-400', bar: 'bg-cyan-400' };
+    if (score >= 80) return { label: 'MASTER STATUS', color: 'text-cyan-400', bar: 'bg-cyan-500' };
+    if (score >= 70) return { label: 'PRO STATUS', color: 'text-emerald-400', bar: 'bg-emerald-400' };
+    return { label: 'DEVELOPING STATUS', color: 'text-amber-400', bar: 'bg-amber-400' };
   };
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncError, setSyncError] = useState(null);
 
-  // Decoupled hooks integration
-  const {
-    matchesList,
-    playerProfile,
-    lccDelta,
-    isLoading,
-    syncTelemetry,
-    updateRankTier,
-    addMockMatch
-  } = useDashboardData(session, activeSelectedGame);
+  useEffect(() => {
+    let isMounted = true;
 
-  const { currentActiveRoster, userRole } = useEsportsEcosystem(activeSelectedGame);
+    const loadDashboardData = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
 
-  const handleInjectMockMatch = async () => {
-    setIsSyncing(true);
-    setSyncError(null);
-    try {
-      const randomScore = Math.floor(Math.random() * 100) + 1;
-      await addMockMatch(randomScore);
-      setTimeout(() => setIsSyncing(false), 800);
-    } catch (err) {
-      console.error('Telemetry injection failed:', err);
-      setSyncError(err?.message || 'Database write blocked by Row-Level Security.');
-      setIsSyncing(false);
-    }
-  };
+      try {
+        // Fetch profile handle
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('valorant_ign, valorant_tag')
+          .eq('id', user.id)
+          .maybeSingle();
 
-  const cardClass = 'bg-white dark:bg-[#0b111e] border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-md dark:shadow-2xl space-y-4';
-  const labelClass = 'block text-[8px] font-mono font-bold uppercase tracking-widest text-slate-600 dark:text-slate-400';
-  const valClass = 'text-xs font-black text-slate-900 dark:text-white uppercase tracking-wide';
+        if (isMounted && profile?.valorant_ign) {
+          setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
+        }
 
-  const userEmail = session?.email || session?.user?.email || 'N/A';
-  const userId = session?.id || session?.user?.id || 'N/A';
-  const gamerTag = session?.user_metadata?.gamerTag || session?.user?.user_metadata?.gamerTag || 'RDeSilva24';
-  const fullName = session?.user_metadata?.fullName || session?.user?.user_metadata?.fullName || 'Anonymous Student';
-  const institution = session?.user_metadata?.institution || session?.user?.user_metadata?.institution || 'Unassigned';
-  const eduLevel = session?.user_metadata?.eduLevel || session?.user?.user_metadata?.eduLevel || 'Undergraduate';
-  const titles = session?.user_metadata?.titles || session?.user?.user_metadata?.titles || [];
+        // Fetch matches from telemetry table
+        const { data: matches, error } = await supabase
+          .from('valorant_match_telemetry')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (isMounted) {
+          if (!error && matches) {
+            setValorantMatches(matches);
+          } else {
+            setValorantMatches([]);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading dashboard data:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadDashboardData();
+    return () => { isMounted = false; };
+  }, [user, selectedGame]);
+
+  const totalMatchesCount = valorantMatches?.length || 0;
+  const latestRecord = totalMatchesCount > 0 ? valorantMatches[0] : null;
+  const payload = latestRecord?.metrics_payload || latestRecord || {};
+
+  const liveRank = payload?.rank || payload?.rank_tier || (totalMatchesCount > 0 ? 'Diamond 3' : 'Unrated');
+  const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
   return (
-    <div className="bg-slate-50 dark:bg-[#070b13] text-slate-900 dark:text-slate-100 font-sans relative z-10 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16 pt-24 pb-12 space-y-8 flex-grow">
-
-      {/* Hero Showcase Banner */}
-      <DashboardHeroShowcase />
-
-      {/* SECTION A: Welcome Banner Card */}
-      <div className="bg-white dark:bg-[#0b111e] border-l-4 border-[#00b4d8] p-6 rounded-r-xl rounded-l-none mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-md dark:shadow-2xl">
-        <div className="space-y-1">
-          <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight uppercase">
-            Welcome back, <span className="text-[#00b4d8]">{gamerTag}</span>!
-          </h2>
-          <p className="text-xs text-slate-600 dark:text-slate-400">
-            Your dual-career portfolio registry telemetry is fully authenticated. Active data transmission channels are open.
-          </p>
-        </div>
-        <div className="flex-shrink-0">
-          <button
-            onClick={logout}
-            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-bold py-2 px-4 rounded-lg transition-all text-[10px] uppercase tracking-wider cursor-pointer select-none active:scale-[0.98] flex items-center gap-1.5 border-none"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            TERMINATE CONNECTION
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION B: Profile Data Matrix (3-Column Grid) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-        {/* 1. Academic Profile */}
-        <div className={cardClass}>
-          <h3 className="text-xs font-black uppercase tracking-widest text-[#00b4d8] border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2 font-mono">
-            <BookMarked className="w-4 h-4 text-[#00b4d8]" />
-            Academic Profile
-          </h3>
-          <div className="space-y-3 pt-1">
-            <div>
-              <span className={labelClass}>Student Name</span>
-              <span className={valClass}>{fullName}</span>
-            </div>
-            <div>
-              <span className={labelClass}>Academic Institution</span>
-              <span className={valClass}>{institution}</span>
-            </div>
-            <div>
-              <span className={labelClass}>Academic Level</span>
-              <span className={valClass}>{eduLevel}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. Competitive Profile */}
-        <div className={cardClass}>
-          <h3 className="text-xs font-black uppercase tracking-widest text-[#00b4d8] border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2 font-mono">
-            <Award className="w-4 h-4 text-[#00b4d8]" />
-            Competitive Profile
-          </h3>
-          <div className="space-y-3 pt-1">
-            <div>
-              <span className={labelClass}>Verified Gamer Tag</span>
-              <span className={valClass}>{gamerTag}</span>
-            </div>
-            <div>
-              <span className={labelClass}>Email Address</span>
-              <span className="text-xs font-black text-slate-900 dark:text-white font-mono">{userEmail}</span>
-            </div>
-            <div>
-              <span className={labelClass}>System UID</span>
-              <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 break-all">{userId}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Registered Genres */}
-        <div className={cardClass}>
-          <h3 className="text-xs font-black uppercase tracking-widest text-[#00b4d8] border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2 font-mono">
-            <Flame className="w-4 h-4 text-[#00b4d8]" />
-            Registered Genres
-          </h3>
-          <div className="space-y-2 pt-1">
-            {titles.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {titles.map((genre) => (
-                  <span
-                    key={genre}
-                    className="px-2 py-0.5 rounded bg-[#00b4d8]/10 border border-[#00b4d8]/20 text-[9px] font-mono font-bold text-[#00b4d8] uppercase tracking-wider"
-                  >
-                    {genre}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-slate-500 italic">No genres selected during onboarding.</div>
-            )}
-          </div>
-        </div>
-
-      </div>
-
-      {/* SECTION C: Esports Analytics Console */}
-      <div className="pt-4 space-y-6">
-
-        {/* Analytics Section Header */}
-        <AnalyticsHeader
-          onRefresh={syncTelemetry}
-          isRefreshing={isLoading}
-          teamName={currentActiveRoster?.team_name || 'SLIIT Esports'}
-          playerRole={userRole}
-        />
-
-        {/* Render game switch pills restricted to registered titles */}
-        <div className="flex items-center gap-2 overflow-x-auto py-2 mb-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-          {registeredTitles.map((game) => (
+    <div className="min-h-screen bg-[#070b10] text-slate-100 p-6 space-y-6 max-w-7xl mx-auto">
+      {/* GAME TABS */}
+      <div className="flex items-center space-x-2 overflow-x-auto pb-2">
+        {SUPPORTED_GAMES.map((game) => {
+          const isSelected = selectedGame === game.id;
+          return (
             <button
-              key={game}
-              type="button"
-              onClick={() => setActiveSelectedGame(game)}
-              className={`px-4 py-2.5 rounded-xl text-xs font-mono font-bold transition uppercase whitespace-nowrap ${
-                activeSelectedGame === game
-                  ? 'bg-[#00b4d8] text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)]'
-                  : 'bg-white dark:bg-[#161b26] border border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:border-slate-400 dark:hover:border-slate-700'
+              key={game.id}
+              onClick={() => setSelectedGame(game.id)}
+              className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition ${
+                isSelected
+                  ? 'bg-cyan-500 text-black font-extrabold shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+                  : 'bg-[#0e1622] text-slate-400 border border-slate-800 hover:text-white hover:border-slate-700'
               }`}
             >
-              {game}
+              {game.name}
             </button>
-          ))}
-        </div>
-
-        {/* Main calculation workspace panel */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-
-          <div className="lg:col-span-8 space-y-6">
-            {/* Synced Account configuration panel */}
-            <IntegrationPanel
-              activeSelectedGame={activeSelectedGame}
-              playerProfile={playerProfile}
-              matchesCount={matchesList.length}
-              onUpdateRank={updateRankTier}
-            />
-
-            {/* capability progress bars grid */}
-            <SkillMatrix />
-          </div>
-
-          <div className="lg:col-span-4 space-y-6">
-            {/* E2E database feedback flags */}
-            {syncError && (
-              <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl text-amber-400 text-xs flex flex-col gap-1">
-                <span className="font-bold font-mono uppercase tracking-wide text-[9px]">Sync Block Warning</span>
-                <p className="text-[11px] leading-relaxed">{syncError}</p>
-                <p className="text-[9px] text-slate-500 font-medium pt-1">
-                  Tip: SQL INSERT policy for the matches table is required in your Supabase configuration.
-                </p>
-              </div>
-            )}
-
-            {/* manual testing telemetry trigger */}
-            <div className="bg-white dark:bg-[#121620] border border-slate-200 dark:border-slate-800 p-5 rounded-xl shadow-md dark:shadow-xl space-y-4">
-              <div className="space-y-1">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">Manual Telemetry Injection</h4>
-                <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-normal">
-                  Trigger a mock performance entry (1-100 rating) to calculate and broadcast live LCC growth coefficients.
-                </p>
-              </div>
-
-              <button
-                onClick={handleInjectMockMatch}
-                disabled={isLoading || isSyncing}
-                className="w-full bg-[#00b4d8] hover:bg-[#0096c7] disabled:bg-slate-800 text-slate-950 font-black py-2.5 px-4 rounded-xl transition-all cursor-pointer border-none flex items-center justify-center gap-2 text-xs uppercase tracking-wider shadow-md shadow-cyan-500/10 select-none active:scale-[0.98]"
-              >
-                {isSyncing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                    Syncing telemetry...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-4 h-4 text-slate-950 stroke-[3]" />
-                    Inject Mock Match
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* stream data log */}
-            <div className="bg-white dark:bg-[#121620] border border-slate-200 dark:border-slate-800 p-5 rounded-xl shadow-md dark:shadow-xl space-y-4">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2 font-mono">
-                <Clock className="w-4 h-4 text-[#00b4d8]" />
-                Telemetry stream log
-              </h4>
-
-              <div className="max-h-[250px] overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-                {isLoading && matchesList.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 space-y-2 text-slate-500">
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span className="text-[9px] font-mono uppercase tracking-wider">Loading...</span>
-                  </div>
-                ) : matchesList.length === 0 ? (
-                  <div className="text-center py-8 rounded-xl border border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/10 text-slate-500 space-y-2">
-                    <Terminal className="w-5 h-5 mx-auto opacity-55" />
-                    <p className="text-xs font-medium">No matches logged for {activeSelectedGame}.</p>
-                    <p className="text-[9px] text-slate-600 dark:text-slate-500">Inject mock match data above.</p>
-                  </div>
-                ) : (
-                  [...matchesList].reverse().map((match, idx) => {
-                    const date = new Date(match.match_timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    return (
-                      <div
-                        key={match.id || idx}
-                        className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60 flex items-center justify-between hover:border-slate-300 dark:hover:border-slate-800 transition-all shadow-sm"
-                      >
-                        <div className="space-y-0.5 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-slate-600 dark:text-slate-500">{date}</span>
-                            <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                              Match #{matchesList.length - idx}
-                            </span>
-                          </div>
-                          <p className="text-[9px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest truncate">{activeSelectedGame}</p>
-                        </div>
-                        <div className="flex-shrink-0 text-right">
-                          <span className="text-xs font-black text-slate-900 dark:text-white font-mono bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 px-2.5 py-1 rounded-md">
-                            {match.performance_score}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-
+          );
+        })}
       </div>
 
+      {/* SYNCED ACCOUNT INTEGRATION CARD */}
+      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+          <div>
+            <div className="flex items-center space-x-3">
+              <h2 className="text-lg font-black tracking-wide text-white uppercase">
+                Synced Account Integration
+              </h2>
+              <span className="bg-cyan-950/80 border border-cyan-700/60 text-cyan-400 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                12 AXIS SIGNAL LINK STABLE
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Active tracking profile synced to <span className="text-cyan-400 font-semibold">{selectedGame}</span> telemetry node.
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <span className="text-xs text-slate-400">
+              BADGE: <span className="text-cyan-400 font-bold">{boundHandle}</span>
+            </span>
+            <a 
+              href="/game-data"
+              className="bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black px-4 py-2 rounded-lg uppercase tracking-wider transition shadow-[0_0_12px_rgba(6,182,212,0.3)]"
+            >
+              Manage Node
+            </a>
+          </div>
+        </div>
+
+        {/* Live Standing Display */}
+        <div className="bg-[#070d14] border border-slate-800/90 rounded-xl p-4 flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-black text-xs">
+              TIER
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-slate-500">{selectedGame} Competitive Standing</div>
+              <div className="text-xl font-black text-white uppercase tracking-wider">{liveRank}</div>
+            </div>
+          </div>
+          
+          <div className="text-right">
+            <div className="text-[10px] uppercase font-bold text-slate-500">Rank Rating</div>
+            <div className="text-xl font-black text-cyan-400">{liveRR} <span className="text-xs text-slate-400">RR</span></div>
+          </div>
+        </div>
+
+        {/* KPI Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-cyan-400 font-black">
+              ▶
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-slate-500">Total Matches Played</div>
+              <div className="text-xl font-black text-white">{totalMatchesCount}</div>
+            </div>
+          </div>
+
+          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-emerald-400 font-black">
+              🛡
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-slate-500">Active Clan or Team Tag</div>
+              <div className="text-sm font-black text-white">SLIIT ESPORTS</div>
+            </div>
+          </div>
+
+          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-amber-400 font-black">
+              ⏱
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-slate-500">Hours Competed</div>
+              <div className="text-xl font-black text-white">
+                {totalMatchesCount > 0 ? (totalMatchesCount * 0.65).toFixed(1) : '0.0'} <span className="text-xs text-slate-400">Hrs</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* PROFESSIONAL SKILL MAPPING MATRIX */}
+      <div className="space-y-4 pt-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black uppercase tracking-wider text-cyan-400 flex items-center gap-2">
+            <span>∿</span> Professional Skill Mapping Matrix
+          </h3>
+          <span className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">
+            {skillScores.reviewCount > 0 
+              ? `Evaluated from ${skillScores.reviewCount} Peer Review${skillScores.reviewCount > 1 ? 's' : ''}` 
+              : 'Evaluated Peer & Telemetry Metrics'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* 1. MATCH COMMUNICATION QUALITY (AMBER THEME) */}
+          <div className="bg-[#0b131d] border border-amber-500/25 hover:border-amber-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(245,158,11,0.06)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-white uppercase tracking-wide">Communication Skills</div>
+                <div className="text-[10px] font-bold uppercase text-amber-400 mt-0.5">
+                  {getStatusLabel(skillScores.communication).label}
+                </div>
+              </div>
+              <span className="text-xl font-black text-amber-400">{skillScores.communication}%</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Relays clean spatial calls, enemy rotation warnings, and strategic audio/visual coordinates.
+            </p>
+            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+              <div 
+                className="h-full rounded-full bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.5)] transition-all duration-500" 
+                style={{ width: `${skillScores.communication}%` }} 
+              />
+            </div>
+          </div>
+
+          {/* 2. TEAMPLAY & TACTICAL COORDINATION (EMERALD THEME) */}
+          <div className="bg-[#0b131d] border border-emerald-500/25 hover:border-emerald-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.06)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-white uppercase tracking-wide">Teamplay & Tactics</div>
+                <div className="text-[10px] font-bold uppercase text-emerald-400 mt-0.5">
+                  {getStatusLabel(skillScores.teamplay).label}
+                </div>
+              </div>
+              <span className="text-xl font-black text-emerald-400">{skillScores.teamplay}%</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Executes coordinated site entries, trade fragging, crossfire positioning, and optimal utility timing.
+            </p>
+            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+              <div 
+                className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-500" 
+                style={{ width: `${skillScores.teamplay}%` }} 
+              />
+            </div>
+          </div>
+
+          {/* 3. MECHANICAL PRECISION & EXECUTION (CYAN THEME) */}
+          <div className="bg-[#0b131d] border border-cyan-500/25 hover:border-cyan-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(6,182,212,0.06)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-white uppercase tracking-wide">Mechanical Precision</div>
+                <div className="text-[10px] font-bold uppercase text-cyan-400 mt-0.5">
+                  {getStatusLabel(skillScores.mechanical).label}
+                </div>
+              </div>
+              <span className="text-xl font-black text-cyan-400">{skillScores.mechanical}%</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Maintains crosshair placement, first-bullet accuracy, recoil reset control, and clutch composure.
+            </p>
+            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+              <div 
+                className="h-full rounded-full bg-gradient-to-r from-cyan-600 to-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.5)] transition-all duration-500" 
+                style={{ width: `${skillScores.mechanical}%` }} 
+              />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

@@ -66,6 +66,7 @@ export const Navbar = ({
   const navItems = [
     { id: 'home', label: 'Home' },
     { id: 'dashboard', label: 'Dashboard' },
+    { id: 'game-data', label: 'Game Data' },
     { id: 'reviews', label: 'Peer Reviews' },
     { id: 'profile', label: 'Verified Resumes' },
     { id: 'rosters', label: 'Roster Management' },

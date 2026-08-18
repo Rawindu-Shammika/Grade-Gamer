@@ -9,6 +9,7 @@ import PeerReviews from './pages/PeerReviews';
 import RosterManagement from './pages/RosterManagement';
 import Messages from './pages/Messages';
 import AboutGradeGamer from './pages/AboutGradeGamer';
+import GameData from './pages/GameData';
 import { 
   Mail, 
   Lock, 
@@ -31,7 +32,7 @@ function App() {
       if (path === 'peer-reviews' || path === 'reviews') return 'reviews';
       if (path === 'roster-management' || path === 'rosters') return 'rosters';
       if (path === 'verified-resume' || path === 'profile') return 'profile';
-      if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
+      if (['messages', 'dashboard', 'home', 'register', 'about', 'game-data'].includes(path)) {
         return path;
       }
       const saved = localStorage.getItem('activeView');
@@ -56,6 +57,9 @@ function App() {
     } else if (newView === 'verified-resume') {
       targetView = 'profile';
       targetPath = '/verified-resume';
+    } else if (newView === 'game-data') {
+      targetView = 'game-data';
+      targetPath = '/game-data';
     } else if (newView === 'home') {
       targetPath = '/';
     }
@@ -79,7 +83,7 @@ function App() {
           setView('rosters');
         } else if (path === 'verified-resume' || path === 'profile') {
           setView('profile');
-        } else if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
+        } else if (['messages', 'dashboard', 'home', 'register', 'about', 'game-data'].includes(path)) {
           setView(path);
         } else {
           setView('home');
@@ -717,6 +721,10 @@ function App() {
 
       {view === 'about' && (
         <AboutGradeGamer onViewChange={updateView} />
+      )}
+
+      {view === 'game-data' && user && (
+        <GameData />
       )}
 
       {/* Footer */}

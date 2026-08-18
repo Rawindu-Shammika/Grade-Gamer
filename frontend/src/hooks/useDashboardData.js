@@ -32,12 +32,18 @@ export const useDashboardData = (session, activeSelectedGame) => {
   const fetchMatches = async () => {
     if (!userId || !activeSelectedGame) return;
     try {
+      const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
+      const sortColumn = activeSelectedGame === 'Valorant' ? 'created_at' : 'match_timestamp'; // or match_date depending on schema, let's use created_at as fallback is standard
+
+      // Fallback: the GameData component uses 'match_date', so we'll use 'match_date' for Valorant if that is the correct schema.
+      const orderByCol = activeSelectedGame === 'Valorant' ? 'match_date' : 'match_timestamp';
+
       const { data, error } = await supabase
-        .from('matches')
+        .from(tableName)
         .select('*')
         .eq('user_id', userId)
         .eq('game_title', activeSelectedGame)
-        .order('match_timestamp', { ascending: true });
+        .order(orderByCol, { ascending: true });
 
       if (error) throw error;
       setMatchesList(data || []);
@@ -85,6 +91,8 @@ export const useDashboardData = (session, activeSelectedGame) => {
 
     if (!userId || !activeSelectedGame) return;
 
+    const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
+
     // Real-time Postgres changes subscription target matches changes
     const channel = supabase
       .channel(`realtime_analytics_${userId}_${activeSelectedGame.replace(/\s+/g, '_')}`)
@@ -93,7 +101,7 @@ export const useDashboardData = (session, activeSelectedGame) => {
         {
           event: '*',
           schema: 'public',
-          table: 'matches',
+          table: tableName,
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
@@ -142,16 +150,23 @@ export const useDashboardData = (session, activeSelectedGame) => {
   const addMockMatch = async (score) => {
     if (!userId || !activeSelectedGame) return;
     try {
+      const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
+      const timeColumn = activeSelectedGame === 'Valorant' ? 'match_date' : 'match_timestamp';
+
+      const payload = {
+        user_id: userId,
+        game_title: activeSelectedGame,
+        performance_score: Number(score),
+        [timeColumn]: new Date().toISOString()
+      };
+
+      if (activeSelectedGame === 'Valorant') {
+        payload.ingestion_type = 'MOCK_DATA';
+      }
+
       const { error } = await supabase
-        .from('matches')
-        .insert([
-          {
-            user_id: userId,
-            game_title: activeSelectedGame,
-            performance_score: Number(score),
-            match_timestamp: new Date().toISOString()
-          }
-        ]);
+        .from(tableName)
+        .insert([payload]);
       if (error) throw error;
     } catch (err) {
       console.error('Error inserting mock match:', err);

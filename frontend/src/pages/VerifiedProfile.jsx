@@ -9,7 +9,10 @@ import { supabase } from '../services/supabaseClient';
 const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
 const SUPABASE_UI_BASE = `${cleanUrl}/storage/v1/object/public/UI`;
-const RESUME_BANNERS = ['DOTA iii.avif', 'VALORANT i.jpg', 'DOTA i.webp'];
+const RESUME_BANNER_IMAGES = [
+  supabase.storage.from('UI').getPublicUrl('DOTA iii.avif').data.publicUrl,
+  supabase.storage.from('UI').getPublicUrl('FC ii.jpg').data.publicUrl,
+];
 
 /**
  * VerifiedProfile Page Component (Slice 3: Verified Career Resume Generator)
@@ -95,7 +98,7 @@ export const VerifiedProfile = () => {
   };
 
   const handleNextBanner = useCallback(() => {
-    setBannerIndex((prev) => (prev + 1) % RESUME_BANNERS.length);
+    setBannerIndex((prev) => (prev + 1) % RESUME_BANNER_IMAGES.length);
   }, []);
 
   const [profileSettings, setProfileSettings] = useState({
@@ -154,7 +157,8 @@ export const VerifiedProfile = () => {
   };
 
   useEffect(() => {
-    const timer = setInterval(handleNextBanner, 10000);
+    if (RESUME_BANNER_IMAGES.length <= 1) return;
+    const timer = setInterval(handleNextBanner, 6000);
     return () => clearInterval(timer);
   }, [handleNextBanner]);
 
@@ -186,18 +190,15 @@ export const VerifiedProfile = () => {
     <div className="bg-slate-50 dark:bg-[#0b0f19] min-h-screen text-slate-900 dark:text-slate-200 p-8 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16">
 
       {/* TOP HERO BANNER (CLEAN - NO EMBEDDED BUTTONS) */}
-      <div className="relative w-full h-48 sm:h-56 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl flex items-center mb-4">
+      <div className="relative w-full h-52 sm:h-60 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl flex items-center mb-4 group">
         {/* Banner Image */}
         <img
-          src={
-            supabase.storage.from('banners').getPublicUrl('resume-banner.jpg').data.publicUrl ||
-            'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80'
-          }
+          src={RESUME_BANNER_IMAGES[bannerIndex]}
           alt="Verified Resume Header Banner"
-          className="w-full h-full object-cover object-[center_35%] absolute inset-0 opacity-80"
+          className="w-full h-full object-cover object-[center_30%] absolute inset-0 opacity-85 transition-opacity duration-700 ease-in-out"
           onError={(e) => {
-            e.target.src =
-              'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80';
+            const fallbackFilename = bannerIndex === 0 ? 'DOTA%20iii.avif' : 'FC%20ii.jpg';
+            e.target.src = supabase.storage.from('UI').getPublicUrl(fallbackFilename).data.publicUrl;
           }}
         />
 
@@ -207,7 +208,7 @@ export const VerifiedProfile = () => {
 
         {/* Typography */}
         <div className="relative z-10 p-6 sm:p-10 space-y-2 max-w-2xl">
-          <span className="px-2.5 py-1 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-widest inline-flex items-center gap-1.5">
+          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-wider inline-flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
             CRYPTOGRAPHIC CREDENTIAL HUB
           </span>
@@ -219,6 +220,19 @@ export const VerifiedProfile = () => {
           <p className="text-xs font-mono text-slate-300 leading-relaxed">
             Export authenticated competitive telemetry, verifiable soft skills, and institutional credentials directly to standard formats.
           </p>
+        </div>
+
+        {/* Indicator Dots */}
+        <div className="absolute bottom-4 right-6 z-20 flex items-center gap-1.5">
+          {RESUME_BANNER_IMAGES.map((_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setBannerIndex(idx)}
+              className={`h-1.5 rounded-full transition-all cursor-pointer ${bannerIndex === idx ? 'w-5 bg-cyan-400' : 'w-1.5 bg-slate-700 hover:bg-slate-500'
+                }`}
+            />
+          ))}
         </div>
       </div>
 
@@ -253,8 +267,8 @@ export const VerifiedProfile = () => {
       </div>
 
       {/* Resume Card template */}
-      <VerifiedResumeCard 
-        resumeData={resumeData} 
+      <VerifiedResumeCard
+        resumeData={resumeData}
         tournaments={tournaments}
         education={education}
         techStack={techStack}
@@ -264,7 +278,7 @@ export const VerifiedProfile = () => {
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 dark:bg-slate-950/85 backdrop-blur-md animate-in fade-in">
           <div className="bg-white dark:bg-[#0b111e] border border-cyan-500/30 rounded-3xl max-w-3xl w-full p-6 md:p-8 shadow-[0_0_40px_rgba(6,182,212,0.15)] max-h-[90vh] overflow-y-auto space-y-6">
-            
+
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-600 dark:text-cyan-400 font-bold">PORTFOLIO CALIBRATION</span>
@@ -357,7 +371,7 @@ export const VerifiedProfile = () => {
                 </div>
               ))}
             </div>
-            
+
             {/* 3. Tech Stack */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
