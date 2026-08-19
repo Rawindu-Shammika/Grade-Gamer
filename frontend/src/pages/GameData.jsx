@@ -3,7 +3,7 @@ import { supabase } from '../services/supabaseClient';
 import useAuth from '../hooks/useAuth';
 import { calculateLCCMetrics } from '../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../utils/valorantActService';
-import { filterMatchesByOfficialAct } from '../utils/actFilter';
+import { applyGlobalActReset } from '../utils/actDataSync';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -181,7 +181,7 @@ export default function GameData() {
 
   // Apply official Act boundary filter
   const cycleMatches = React.useMemo(() => {
-    return filterMatchesByOfficialAct(activeGameLogs, selectedGame, actInfo);
+    return applyGlobalActReset(activeGameLogs, selectedGame, actInfo);
   }, [activeGameLogs, selectedGame, actInfo]);
 
   // Compute LCC strictly using ACS via unified calculator on active cycle matches

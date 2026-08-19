@@ -5,6 +5,8 @@ import { ShieldCheck, RefreshCw, AlertTriangle, Layers, Award, Terminal, Printer
 import { getUiImageUrl } from '../utils/supabaseAssets';
 import { VerifiedResumeCard } from '../components/resume/VerifiedResumeCard';
 import { supabase } from '../services/supabaseClient';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { ResumePDFDocument } from '../components/ResumePDFDocument';
 
 // Supabase storage UI bucket reference
 const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
@@ -261,14 +263,20 @@ export const VerifiedProfile = () => {
           <span>EDIT CREDENTIALS</span>
         </button>
 
-        <button
-          type="button"
-          onClick={handlePrint}
-          className="px-5 py-2 rounded-xl bg-cyan-400 text-slate-950 font-mono text-xs font-bold uppercase hover:bg-cyan-300 transition-all shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center gap-2 cursor-pointer"
+        <PDFDownloadLink
+          document={<ResumePDFDocument selectedGame={profile?.esports_titles?.[0] || 'VALORANT'} skillData={{}} userData={{...user, ...profile, fullName: profile?.full_name || user?.user_metadata?.full_name, ign: profile?.ign}} />}
+          fileName={`GradeGamer_ATS_Resume_${profile?.full_name || 'Export'}.pdf`}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-mono font-bold text-xs uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer"
         >
-          <span>🖨</span>
-          <span>PRINT / SAVE AS PDF</span>
-        </button>
+          {({ loading }) => (
+            <>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              {loading ? 'CALIBRATING PDF...' : 'EXPORT ATS RESUME PDF'}
+            </>
+          )}
+        </PDFDownloadLink>
 
         <button
           type="button"
