@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import useAuth from '../hooks/useAuth';
 import { calculateLCCMetrics } from '../utils/lccCalculator';
-import { getActiveCycleMatches } from '../utils/cycleFilter';
+import { fetchCurrentValorantAct } from '../utils/valorantActService';
+import { filterMatchesByOfficialAct } from '../utils/actFilter';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -36,45 +37,12 @@ export default function GameData() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
 
-  const [seasonInfo, setSeasonInfo] = useState({
-    fullSeasonTitle: 'VALORANT ACT CYCLE',
-    daysRemaining: 56,
-  });
+  const [actInfo, setActInfo] = useState(null);
 
   useEffect(() => {
-    const fetchSeason = async () => {
-      if (String(selectedGame || '').toLowerCase().includes('val')) {
-        try {
-          const res = await fetch('https://valorant-api.com/v1/seasons');
-          const json = await res.json();
-          if (json.status === 200 && Array.isArray(json.data)) {
-            const now = new Date();
-            const activeAct = json.data.find(
-              (s) => s.parentUuid && new Date(s.startTime) <= now && new Date(s.endTime) >= now
-            );
-
-            if (activeAct) {
-              const parentEpisode = json.data.find((s) => s.uuid === activeAct.parentUuid);
-              const ep = parentEpisode ? parentEpisode.displayName.toUpperCase() : '';
-              const act = activeAct.displayName.toUpperCase();
-              const days = Math.max(
-                0,
-                Math.ceil((new Date(activeAct.endTime) - now) / (1000 * 60 * 60 * 24))
-              );
-
-              setSeasonInfo({
-                fullSeasonTitle: ep ? `${ep} // ${act}` : act,
-                daysRemaining: days,
-              });
-            }
-          }
-        } catch (e) {
-          console.error('Failed to load official season:', e);
-        }
-      }
-    };
-
-    fetchSeason();
+    if (String(selectedGame || '').toLowerCase().includes('val')) {
+      fetchCurrentValorantAct().then((data) => setActInfo(data));
+    }
   }, [selectedGame]);
 
   // Carousel state & rotation logic
@@ -211,10 +179,10 @@ export default function GameData() {
     return rawMatches;
   }, [matchHistory, selectedGame]);
 
-  // Apply 8-Week Act Cycle Logic
-  const { activeMatches: cycleMatches, cycleNumber, daysRemaining } = React.useMemo(() => {
-    return getActiveCycleMatches(activeGameLogs, selectedGame);
-  }, [activeGameLogs, selectedGame]);
+  // Apply official Act boundary filter
+  const cycleMatches = React.useMemo(() => {
+    return filterMatchesByOfficialAct(activeGameLogs, selectedGame, actInfo);
+  }, [activeGameLogs, selectedGame, actInfo]);
 
   // Compute LCC strictly using ACS via unified calculator on active cycle matches
   const lccResults = React.useMemo(() => calculateLCCMetrics(cycleMatches), [cycleMatches]);
@@ -516,18 +484,16 @@ export default function GameData() {
               Real-time telemetry extraction active for <strong>{selectedGame}</strong> via automated webhooks and memory stream simulator.
             </p>
 
-            {/* OFFICIAL VALORANT ACT CYCLE BANNER */}
-            {String(selectedGame || '').toLowerCase().includes('val') && (
-              <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-[#050b13] border border-cyan-500/30 mb-4 font-mono text-xs shadow-[0_0_15px_rgba(34,211,238,0.05)]">
+            {/* CURRENT ACT CYCLE BANNER */}
+            {String(selectedGame || '').toLowerCase().includes('val') && actInfo?.title && (
+              <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-[#050b13] border border-cyan-500/20 mb-4 font-mono text-xs shadow-[0_0_15px_rgba(34,211,238,0.05)]">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0"></span>
                 <span className="text-slate-400">
                   CURRENT ACT CYCLE:{' '}
                   <strong className="text-white font-black tracking-wider">
-                    {seasonInfo.fullSeasonTitle}
+                    {actInfo?.title || 'V26 // ACT V'}
                   </strong>
                 </span>
-                <span className="text-slate-600">•</span>
-                <span className="text-cyan-400 font-bold">{seasonInfo.daysRemaining} Days Remaining</span>
               </div>
             )}
 

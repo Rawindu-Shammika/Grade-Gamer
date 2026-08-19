@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../services/supabaseClient";
 import useAuth from "../../hooks/useAuth";
 import { calculateLCCMetrics } from '../../utils/lccCalculator';
-import { getActiveCycleMatches } from '../../utils/cycleFilter';
+import { fetchCurrentValorantAct } from '../../utils/valorantActService';
+import { filterMatchesByOfficialAct } from '../../utils/actFilter';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -112,6 +113,13 @@ export const HomeDashboard = () => {
   const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
 
   const [selectedGame, setSelectedGame] = useState('Valorant');
+  const [actInfo, setActInfo] = useState(null);
+
+  useEffect(() => {
+    if (String(selectedGame || '').toLowerCase().includes('val')) {
+      fetchCurrentValorantAct().then((data) => setActInfo(data));
+    }
+  }, [selectedGame]);
 
   useEffect(() => {
     if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
@@ -307,9 +315,9 @@ export const HomeDashboard = () => {
   const liveRank = payload?.rank || payload?.rank_tier || (totalMatchesCount > 0 ? 'Diamond 3' : 'Unrated');
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
-  const { activeMatches: activeDashboardMatches } = useMemo(() => {
-    return getActiveCycleMatches(valorantMatches || [], selectedGame);
-  }, [valorantMatches, selectedGame]);
+  const activeDashboardMatches = useMemo(() => {
+    return filterMatchesByOfficialAct(valorantMatches || [], selectedGame, actInfo);
+  }, [valorantMatches, selectedGame, actInfo]);
 
   const dashLCC = React.useMemo(() => calculateLCCMetrics([...(activeDashboardMatches || [])].reverse()), [activeDashboardMatches]);
 
@@ -345,7 +353,7 @@ export const HomeDashboard = () => {
         kd: kdVal
       };
     });
-  }, [valorantMatches]);
+  }, [activeDashboardMatches]);
 
   const hasReviews = skillScores.reviewCount > 0;
   const skills = {
@@ -498,6 +506,19 @@ export const HomeDashboard = () => {
 
           </div>
         </div>
+
+        {/* OFFICIAL VALORANT ACT CYCLE BANNER */}
+        {String(selectedGame || '').toLowerCase().includes('val') && actInfo?.title && (
+          <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-[#08101a] border border-cyan-500/20 mb-4 font-mono text-xs shadow-[0_0_15px_rgba(34,211,238,0.05)]">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0"></span>
+            <span className="text-slate-400">
+              CURRENT ACT CYCLE:{' '}
+              <strong className="text-white font-black tracking-wider">
+                {actInfo?.title || 'V26 // ACT V'}
+              </strong>
+            </span>
+          </div>
+        )}
 
         {/* KPI Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
