@@ -29,10 +29,16 @@ const DASHBOARD_BANNERS = [
 ];
 
 export const HomeDashboard = () => {
-  const authState = useAuth();
-  const user = authState?.user || null;
+  const { user, profile } = useAuth();
+  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
 
   const [selectedGame, setSelectedGame] = useState('Valorant');
+
+  useEffect(() => {
+    if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
+      setSelectedGame(registeredTitles[0]);
+    }
+  }, [registeredTitles, selectedGame]);
   const [valorantMatches, setValorantMatches] = useState([]);
   const [boundHandle, setBoundHandle] = useState('UNLINKED');
   const [loading, setLoading] = useState(true);
@@ -307,13 +313,11 @@ export const HomeDashboard = () => {
             onChange={(e) => setSelectedGame(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
-            <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">VALORANT</option>
-            <option value="Assetto Corsa" className="bg-[#0b131d] text-white font-mono py-2">ASSETTO CORSA</option>
-            <option value="F1 25" className="bg-[#0b131d] text-white font-mono py-2">F1 25</option>
-            <option value="Counter-Strike 2" className="bg-[#0b131d] text-white font-mono py-2">COUNTER-STRIKE 2</option>
-            <option value="League of Legends" className="bg-[#0b131d] text-white font-mono py-2">LEAGUE OF LEGENDS</option>
-            <option value="Dota 2" className="bg-[#0b131d] text-white font-mono py-2">DOTA 2</option>
-            <option value="Apex Legends" className="bg-[#0b131d] text-white font-mono py-2">APEX LEGENDS</option>
+            {registeredTitles.map((title) => (
+              <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
+                {title.toUpperCase()}
+              </option>
+            ))}
           </select>
 
           {/* Dropdown Chevron Icon */}

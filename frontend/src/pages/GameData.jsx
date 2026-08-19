@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
+import useAuth from '../hooks/useAuth';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -26,8 +27,8 @@ const GAMEDATA_BANNERS = [
 ];
 
 export default function GameData() {
-  const [user, setUser] = useState(null);
-  const [registeredTitles, setRegisteredTitles] = useState([]);
+  const { user, profile } = useAuth();
+  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,30 +102,12 @@ export default function GameData() {
   const [manualPassAccuracy, setManualPassAccuracy] = useState('91');
   const [manualPossession, setManualPossession] = useState('58');
 
-  // 1. Fetch User & Registered Titles
+  // 1. Synchronize Registered Titles
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      setUser(user);
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('esports_titles')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (profile?.esports_titles?.length) {
-        setRegisteredTitles(profile.esports_titles);
-        setSelectedGame(profile.esports_titles[0]);
-      } else {
-        const defaults = ['Valorant', 'F1 25', 'EA FC 27'];
-        setRegisteredTitles(defaults);
-        setSelectedGame(defaults[0]);
-      }
-    };
-    fetchUser();
-  }, []);
+    if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
+      setSelectedGame(registeredTitles[0]);
+    }
+  }, [registeredTitles, selectedGame]);
 
   // 2. Fetch Telemetry History for Selected Game
   const fetchTelemetryHistory = async () => {
@@ -407,13 +390,11 @@ export default function GameData() {
             onChange={(e) => setSelectedGame(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
-            <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">VALORANT</option>
-            <option value="Assetto Corsa" className="bg-[#0b131d] text-white font-mono py-2">ASSETTO CORSA</option>
-            <option value="F1 25" className="bg-[#0b131d] text-white font-mono py-2">F1 25</option>
-            <option value="Counter-Strike 2" className="bg-[#0b131d] text-white font-mono py-2">COUNTER-STRIKE 2</option>
-            <option value="League of Legends" className="bg-[#0b131d] text-white font-mono py-2">LEAGUE OF LEGENDS</option>
-            <option value="Dota 2" className="bg-[#0b131d] text-white font-mono py-2">DOTA 2</option>
-            <option value="Apex Legends" className="bg-[#0b131d] text-white font-mono py-2">APEX LEGENDS</option>
+            {registeredTitles.map((title) => (
+              <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
+                {title.toUpperCase()}
+              </option>
+            ))}
           </select>
 
           {/* Dropdown Chevron */}
