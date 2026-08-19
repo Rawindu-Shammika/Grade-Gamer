@@ -3,7 +3,7 @@ import { supabase } from "../../services/supabaseClient";
 import useAuth from "../../hooks/useAuth";
 import { calculateLCCMetrics } from '../../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../../utils/valorantActService';
-import { filterMatchesByOfficialAct } from '../../utils/actFilter';
+import { applyGlobalActReset } from '../../utils/actDataSync';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -146,14 +146,7 @@ export const HomeDashboard = () => {
   }, []);
 
   // 1. Add Skill Review Aggregation State & Fetch
-  const [skillScores, setSkillScores] = useState({
-    communication: 0,
-    teamplay: 0,
-    mechanical: 0,
-    leadership: 0,
-    reviewCount: 0,
-    hasLeadership: false
-  });
+  const [receivedReviews, setReceivedReviews] = useState([]);
 
   useEffect(() => {
     const loadPeerSkillData = async () => {
@@ -167,54 +160,10 @@ export const HomeDashboard = () => {
           .eq('target_user_id', user.id)
           .ilike('game_title', selectedGame);
 
-        if (!error && reviews && reviews.length > 0) {
-          let commSum = 0;
-          let teamSum = 0;
-          let mechSum = 0;
-          let leadSum = 0;
-          let leadCount = 0;
-
-          reviews.forEach((r) => {
-            // Normalize ratings (e.g. if stored as 1-5 or 1-100)
-            const c = r.communication_rating ?? r.communication ?? 4;
-            const t = r.teamplay_rating ?? r.tactical_rating ?? r.teamplay ?? 4.2;
-            const m = r.mechanical_rating ?? r.execution_rating ?? r.mechanical ?? 4.1;
-            const l = r.leadership_rating ?? r.leadership_score ?? r.leadership ?? null;
-
-            commSum += c > 5 ? c : (c / 5) * 100;
-            teamSum += t > 5 ? t : (t / 5) * 100;
-            mechSum += m > 5 ? m : (m / 5) * 100;
-
-            if (l !== null && l !== undefined) {
-              leadSum += l > 5 ? l : (l / 5) * 100;
-              leadCount++;
-            }
-          });
-
-          const isIGLForGame = Boolean(
-            profile?.is_igl ||
-            profile?.game_roles?.[selectedGame]?.includes('IGL') ||
-            leadCount > 0
-          );
-
-          const count = reviews.length;
-          setSkillScores({
-            communication: Math.round(commSum / count),
-            teamplay: Math.round(teamSum / count),
-            mechanical: Math.round(mechSum / count),
-            leadership: leadCount > 0 ? Math.round(leadSum / leadCount) : 0,
-            reviewCount: count,
-            hasLeadership: isIGLForGame && leadCount > 0
-          });
+        if (!error && reviews) {
+          setReceivedReviews(reviews);
         } else {
-          setSkillScores({
-            communication: 0,
-            teamplay: 0,
-            mechanical: 0,
-            leadership: 0,
-            reviewCount: 0,
-            hasLeadership: false
-          });
+          setReceivedReviews([]);
         }
       } catch (err) {
         console.error("Error loading peer skill reviews:", err);
@@ -223,6 +172,63 @@ export const HomeDashboard = () => {
 
     loadPeerSkillData();
   }, [user, selectedGame]);
+
+  // 2. Global Reset Applied to Peer Reviews for this Act
+  const activeCycleReviews = useMemo(() => {
+    return applyGlobalActReset(receivedReviews, selectedGame, actInfo);
+  }, [receivedReviews, selectedGame, actInfo]);
+
+  // 3. Compute skill scores dynamically from active cycle reviews
+  const skillScores = useMemo(() => {
+    if (activeCycleReviews.length === 0) {
+      return {
+        communication: 0,
+        teamplay: 0,
+        mechanical: 0,
+        leadership: 0,
+        reviewCount: 0,
+        hasLeadership: false
+      };
+    }
+
+    let commSum = 0;
+    let teamSum = 0;
+    let mechSum = 0;
+    let leadSum = 0;
+    let leadCount = 0;
+
+    activeCycleReviews.forEach((r) => {
+      const c = r.communication_rating ?? r.communication ?? 4;
+      const t = r.teamplay_rating ?? r.tactical_rating ?? r.teamplay ?? 4.2;
+      const m = r.mechanical_rating ?? r.execution_rating ?? r.mechanical ?? 4.1;
+      const l = r.leadership_rating ?? r.leadership_score ?? r.leadership ?? null;
+
+      commSum += c > 5 ? c : (c / 5) * 100;
+      teamSum += t > 5 ? t : (t / 5) * 100;
+      mechSum += m > 5 ? m : (m / 5) * 100;
+
+      if (l !== null && l !== undefined) {
+        leadSum += l > 5 ? l : (l / 5) * 100;
+        leadCount++;
+      }
+    });
+
+    const isIGLForGame = Boolean(
+      profile?.is_igl ||
+      profile?.game_roles?.[selectedGame]?.includes('IGL') ||
+      leadCount > 0
+    );
+
+    const count = activeCycleReviews.length;
+    return {
+      communication: Math.round(commSum / count),
+      teamplay: Math.round(teamSum / count),
+      mechanical: Math.round(mechSum / count),
+      leadership: leadCount > 0 ? Math.round(leadSum / leadCount) : 0,
+      reviewCount: count,
+      hasLeadership: isIGLForGame && leadCount > 0
+    };
+  }, [activeCycleReviews, profile, selectedGame]);
 
   // Status label helper
   const getStatusLabel = (score) => {
@@ -316,10 +322,45 @@ export const HomeDashboard = () => {
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
   const activeDashboardMatches = useMemo(() => {
-    return filterMatchesByOfficialAct(valorantMatches || [], selectedGame, actInfo);
+    return applyGlobalActReset(valorantMatches || [], selectedGame, actInfo);
   }, [valorantMatches, selectedGame, actInfo]);
 
   const dashLCC = React.useMemo(() => calculateLCCMetrics([...(activeDashboardMatches || [])].reverse()), [activeDashboardMatches]);
+
+  // Calculate dynamic dashboard stats from the active matches stream
+  const dashboardStats = React.useMemo(() => {
+    const list = Array.isArray(activeDashboardMatches) ? activeDashboardMatches : [];
+    const totalMatches = list.length;
+
+    if (totalMatches === 0) {
+      return {
+        totalMatches: 0,
+        hoursCompeted: '0.0',
+      };
+    }
+
+    // Calculate total duration in hours
+    const totalSeconds = list.reduce((acc, m) => {
+      // 1. If match has explicit duration in seconds
+      if (m.duration_seconds !== undefined && m.duration_seconds !== null) {
+        return acc + Number(m.duration_seconds);
+      }
+      // 2. If match has duration in milliseconds
+      if (m.duration_ms !== undefined && m.duration_ms !== null) {
+        return acc + Number(m.duration_ms) / 1000;
+      }
+      // 3. Fallback: Estimate from total rounds played (~115 seconds per round in competitive)
+      const rounds = Number(m.stats?.rounds_played || m.rounds_played || 20);
+      return acc + rounds * 115;
+    }, 0);
+
+    const hours = (totalSeconds / 3600).toFixed(1);
+
+    return {
+      totalMatches,
+      hoursCompeted: hours,
+    };
+  }, [activeDashboardMatches]);
 
   const activeGameTelemetry = useMemo(() => {
     if (!activeDashboardMatches || activeDashboardMatches.length === 0) return [];
@@ -521,18 +562,27 @@ export const HomeDashboard = () => {
         )}
 
         {/* KPI Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-cyan-400 font-black">
-              ▶
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+
+          {/* 1. TOTAL MATCHES PLAYED */}
+          <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg border bg-cyan-950/40 border-cyan-500/30 text-cyan-400">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500">Total Matches Played</div>
-              <div className="text-xl font-black text-white">{totalMatchesCount}</div>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                TOTAL MATCHES PLAYED
+              </div>
+              <div className="text-base sm:text-lg font-mono font-black text-white">
+                {dashboardStats.totalMatches}
+              </div>
             </div>
           </div>
 
-          {/* TOP METRIC CARD: LINEAR GROWTH SLOPE */}
+          {/* 2. LINEAR GROWTH SLOPE */}
           <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
             <div className={`flex items-center justify-center w-10 h-10 rounded-lg border ${
               dashLCC.slopeNumeric >= 0
@@ -555,17 +605,23 @@ export const HomeDashboard = () => {
             </div>
           </div>
 
-          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-amber-400 font-black">
-              ⏱
+          {/* 3. HOURS COMPETED */}
+          <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg border bg-amber-950/40 border-amber-500/30 text-amber-400">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500">Hours Competed</div>
-              <div className="text-xl font-black text-white">
-                {totalMatchesCount > 0 ? (totalMatchesCount * 0.65).toFixed(1) : '0.0'} <span className="text-xs text-slate-400">Hrs</span>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                HOURS COMPETED
+              </div>
+              <div className="text-base sm:text-lg font-mono font-black text-white">
+                {dashboardStats.hoursCompeted} <span className="text-xs text-slate-400 font-normal">Hrs</span>
               </div>
             </div>
           </div>
+
         </div>
       </div>
 
