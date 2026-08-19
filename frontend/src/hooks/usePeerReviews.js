@@ -179,9 +179,10 @@ export const usePeerReviews = () => {
       const targetId = selectedTeammate.user_id || selectedTeammate.id || selectedTeammate.player_name;
       const targetUserUuid = selectedTeammate.user_id ? String(targetId) : currentUser.id;
 
-      const overall = parseFloat(
-        ((Number(reviewData.communication_score) + Number(reviewData.reliability_score) + Number(reviewData.composure_score)) / 3).toFixed(1)
-      );
+      const isTargetIGL = reviewData.isTargetIGL;
+      const overall = isTargetIGL
+        ? parseFloat(((Number(reviewData.communication_score) + Number(reviewData.reliability_score) + Number(reviewData.composure_score) + Number(reviewData.leadership_score)) / 4).toFixed(1))
+        : parseFloat(((Number(reviewData.communication_score) + Number(reviewData.reliability_score) + Number(reviewData.composure_score)) / 3).toFixed(1));
 
       const payload = {
         reviewer_id: currentUser.id,
@@ -190,8 +191,7 @@ export const usePeerReviews = () => {
         communication_rating: Number(reviewData.communication_score),
         teamplay_rating: Number(reviewData.reliability_score),
         mechanical_rating: Number(reviewData.composure_score),
-        composure_rating: Number(reviewData.communication_score),
-        leadership_rating: Number(reviewData.reliability_score),
+        leadership_rating: isTargetIGL ? Number(reviewData.leadership_score) : null,
         overall_rating: overall,
         comment: reviewData.constructive_comment ? reviewData.constructive_comment.trim() : null
       };

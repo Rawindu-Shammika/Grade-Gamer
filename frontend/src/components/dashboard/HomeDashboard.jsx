@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../services/supabaseClient";
 import useAuth from "../../hooks/useAuth";
+import { calculateLCCMetrics } from '../../utils/lccCalculator';
+import { getActiveCycleMatches } from '../../utils/cycleFilter';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -27,6 +31,81 @@ const DASHBOARD_BANNERS = [
   'PUBG i.jpg',
   'APEX iv.jpg',
 ];
+
+// 1. Color Helper for Text, Box Accent, and Dot Glow
+const getRankTheme = (tierName) => {
+  const rank = String(tierName || '').toUpperCase();
+
+  if (rank.includes('IRON')) {
+    return { 
+      text: 'text-stone-400', 
+      boxBorder: 'border-stone-500/30',
+      dot: 'bg-stone-400 shadow-[0_0_10px_rgba(168,162,158,0.8)]' 
+    };
+  }
+  if (rank.includes('BRONZE')) {
+    return { 
+      text: 'text-amber-700', 
+      boxBorder: 'border-amber-700/30',
+      dot: 'bg-amber-700 shadow-[0_0_10px_rgba(180,83,9,0.8)]' 
+    };
+  }
+  if (rank.includes('SILVER')) {
+    return { 
+      text: 'text-slate-300', 
+      boxBorder: 'border-slate-400/30',
+      dot: 'bg-slate-300 shadow-[0_0_10px_rgba(203,213,225,0.8)]' 
+    };
+  }
+  if (rank.includes('GOLD')) {
+    return { 
+      text: 'text-yellow-400', 
+      boxBorder: 'border-yellow-500/30',
+      dot: 'bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.85)]' 
+    };
+  }
+  if (rank.includes('PLATINUM')) {
+    return { 
+      text: 'text-teal-400', 
+      boxBorder: 'border-teal-500/30',
+      dot: 'bg-teal-400 shadow-[0_0_12px_rgba(45,212,191,0.85)]' 
+    };
+  }
+  if (rank.includes('DIAMOND')) {
+    return { 
+      text: 'text-fuchsia-400', 
+      boxBorder: 'border-fuchsia-500/30',
+      dot: 'bg-fuchsia-400 shadow-[0_0_14px_rgba(232,121,249,0.9)]' 
+    };
+  }
+  if (rank.includes('ASCENDANT')) {
+    return { 
+      text: 'text-emerald-400', 
+      boxBorder: 'border-emerald-500/30',
+      dot: 'bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.9)]' 
+    };
+  }
+  if (rank.includes('IMMORTAL')) {
+    return { 
+      text: 'text-rose-500', 
+      boxBorder: 'border-rose-500/30',
+      dot: 'bg-rose-500 shadow-[0_0_14px_rgba(244,63,94,0.9)]' 
+    };
+  }
+  if (rank.includes('RADIANT')) {
+    return { 
+      text: 'text-amber-200', 
+      boxBorder: 'border-amber-300/40',
+      dot: 'bg-amber-200 shadow-[0_0_16px_rgba(253,230,138,1)]' 
+    };
+  }
+
+  return { 
+    text: 'text-cyan-400', 
+    boxBorder: 'border-cyan-500/30',
+    dot: 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]' 
+  };
+};
 
 export const HomeDashboard = () => {
   const { user, profile } = useAuth();
@@ -60,10 +139,12 @@ export const HomeDashboard = () => {
 
   // 1. Add Skill Review Aggregation State & Fetch
   const [skillScores, setSkillScores] = useState({
-    communication: 82,
-    teamplay: 88,
-    mechanical: 85,
-    reviewCount: 0
+    communication: 0,
+    teamplay: 0,
+    mechanical: 0,
+    leadership: 0,
+    reviewCount: 0,
+    hasLeadership: false
   });
 
   useEffect(() => {
@@ -75,31 +156,56 @@ export const HomeDashboard = () => {
         const { data: reviews, error } = await supabase
           .from('peer_reviews')
           .select('*')
-          .or(`reviewee_id.eq.${user.id},target_user_id.eq.${user.id}`)
-          .eq('game_title', selectedGame);
+          .eq('target_user_id', user.id)
+          .ilike('game_title', selectedGame);
 
         if (!error && reviews && reviews.length > 0) {
           let commSum = 0;
           let teamSum = 0;
           let mechSum = 0;
+          let leadSum = 0;
+          let leadCount = 0;
 
           reviews.forEach((r) => {
             // Normalize ratings (e.g. if stored as 1-5 or 1-100)
             const c = r.communication_rating ?? r.communication ?? 4;
             const t = r.teamplay_rating ?? r.tactical_rating ?? r.teamplay ?? 4.2;
             const m = r.mechanical_rating ?? r.execution_rating ?? r.mechanical ?? 4.1;
+            const l = r.leadership_rating ?? r.leadership_score ?? r.leadership ?? null;
 
             commSum += c > 5 ? c : (c / 5) * 100;
             teamSum += t > 5 ? t : (t / 5) * 100;
             mechSum += m > 5 ? m : (m / 5) * 100;
+
+            if (l !== null && l !== undefined) {
+              leadSum += l > 5 ? l : (l / 5) * 100;
+              leadCount++;
+            }
           });
+
+          const isIGLForGame = Boolean(
+            profile?.is_igl ||
+            profile?.game_roles?.[selectedGame]?.includes('IGL') ||
+            leadCount > 0
+          );
 
           const count = reviews.length;
           setSkillScores({
             communication: Math.round(commSum / count),
             teamplay: Math.round(teamSum / count),
             mechanical: Math.round(mechSum / count),
-            reviewCount: count
+            leadership: leadCount > 0 ? Math.round(leadSum / leadCount) : 0,
+            reviewCount: count,
+            hasLeadership: isIGLForGame && leadCount > 0
+          });
+        } else {
+          setSkillScores({
+            communication: 0,
+            teamplay: 0,
+            mechanical: 0,
+            leadership: 0,
+            reviewCount: 0,
+            hasLeadership: false
           });
         }
       } catch (err) {
@@ -112,6 +218,7 @@ export const HomeDashboard = () => {
 
   // Status label helper
   const getStatusLabel = (score) => {
+    if (skillScores.reviewCount === 0 || score === 0) return { label: 'UNCALIBRATED', color: 'text-slate-500', bar: 'bg-slate-800' };
     if (score >= 90) return { label: 'ELITE STATUS', color: 'text-cyan-400', bar: 'bg-cyan-400' };
     if (score >= 80) return { label: 'MASTER STATUS', color: 'text-cyan-400', bar: 'bg-cyan-500' };
     if (score >= 70) return { label: 'PRO STATUS', color: 'text-emerald-400', bar: 'bg-emerald-400' };
@@ -200,44 +307,54 @@ export const HomeDashboard = () => {
   const liveRank = payload?.rank || payload?.rank_tier || (totalMatchesCount > 0 ? 'Diamond 3' : 'Unrated');
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
-  const lccStats = React.useMemo(() => {
-    if (!valorantMatches || valorantMatches.length < 2) {
-      return {
-        score: '--',
-        slope: '0.00',
-        isPositive: true
-      };
-    }
-    const ascMatches = [...valorantMatches].reverse();
-    const scores = ascMatches.map((l) => Number(l.calculated_rating || l.score || l.performance_score || 50));
-    const baseline = (scores.slice(0, 5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
-    const current = (scores.slice(-5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
-    const slope = ((Number(current) - Number(baseline)) / Math.max(1, valorantMatches.length)).toFixed(2);
-    
-    return {
-      score: current,
-      slope: slope,
-      isPositive: Number(slope) >= 0
-    };
-  }, [valorantMatches]);
+  const { activeMatches: activeDashboardMatches } = useMemo(() => {
+    return getActiveCycleMatches(valorantMatches || [], selectedGame);
+  }, [valorantMatches, selectedGame]);
+
+  const dashLCC = React.useMemo(() => calculateLCCMetrics([...(activeDashboardMatches || [])].reverse()), [activeDashboardMatches]);
 
   const activeGameTelemetry = useMemo(() => {
-    if (!valorantMatches) return [];
-    const ascMatches = [...valorantMatches].reverse();
+    if (!activeDashboardMatches || activeDashboardMatches.length === 0) return [];
+    const ascMatches = [...activeDashboardMatches].reverse();
 
     return ascMatches.map((match, idx) => {
       const ratingVal = match.performance_score || match.calculated_rating || match.rating || 50;
       const mapName = match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH';
       const kdVal = match.metrics_payload?.kd || match.metrics_payload?.kd_ratio || match.kd || match.kd_ratio || '1.0';
 
+      let rawACS = 0;
+      if (match.acs !== undefined && match.acs !== null && !isNaN(match.acs)) {
+        rawACS = Number(match.acs);
+      } else if (match.metrics_payload?.acs !== undefined && !isNaN(match.metrics_payload.acs)) {
+        rawACS = Number(match.metrics_payload.acs);
+      } else if (match.stats?.score && match.stats?.rounds_played) {
+        rawACS = Math.round(Number(match.stats.score) / Math.max(Number(match.stats.rounds_played), 1));
+      } else if (match.metrics_payload?.score && match.metrics_payload?.rounds_played) {
+        rawACS = Math.round(Number(match.metrics_payload.score) / Math.max(Number(match.metrics_payload.rounds_played), 1));
+      } else if (match.score && match.rounds_played) {
+        rawACS = Math.round(Number(match.score) / Math.max(Number(match.rounds_played), 1));
+      } else {
+        rawACS = Number(ratingVal || 200);
+      }
+
       return {
         matchIndex: `#${idx + 1}`,
         scoreP: Number(ratingVal).toFixed(1),
+        acs: rawACS,
         map: mapName,
         kd: kdVal
       };
     });
   }, [valorantMatches]);
+
+  const hasReviews = skillScores.reviewCount > 0;
+  const skills = {
+    comm: hasReviews ? skillScores.communication : 0,
+    team: hasReviews ? skillScores.teamplay : 0,
+    mech: hasReviews ? skillScores.mechanical : 0,
+    lead: hasReviews ? skillScores.leadership : 0
+  };
+  const peerReviewsCount = skillScores.reviewCount;
 
   return (
     <div className="bg-slate-50 dark:bg-[#070b13] min-h-screen text-slate-900 dark:text-slate-100 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16 selection:bg-cyan-500/30">
@@ -360,21 +477,25 @@ export const HomeDashboard = () => {
           </div>
         </div>
 
-        {/* Live Standing Display */}
-        <div className="bg-[#070d14] border border-slate-800/90 rounded-xl p-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-black text-xs">
-              TIER
+        {/* COMPETITIVE STANDING BANNER */}
+        <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4">
+          <div className="flex items-center gap-3.5">
+            
+            {/* FRAMED BOX WITH BLINKING RANK DOT */}
+            <div className={`w-10 h-10 rounded-xl bg-[#070e17] border flex items-center justify-center shrink-0 ${getRankTheme(liveRank).boxBorder}`}>
+              <div className={`w-3 h-3 rounded-full animate-pulse ${getRankTheme(liveRank).dot}`}></div>
             </div>
+
+            {/* DETAILS */}
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500">{selectedGame} Competitive Standing</div>
-              <div className="text-xl font-black text-white uppercase tracking-wider">{liveRank}</div>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+              </div>
+              <div className={`text-base sm:text-lg font-black uppercase tracking-wide ${getRankTheme(liveRank).text}`}>
+                {liveRank || 'IMMORTAL 1'}
+              </div>
             </div>
-          </div>
-          
-          <div className="text-right">
-            <div className="text-[10px] uppercase font-bold text-slate-500">Rank Rating</div>
-            <div className="text-xl font-black text-cyan-400">{liveRR} <span className="text-xs text-slate-400">RR</span></div>
+
           </div>
         </div>
 
@@ -390,10 +511,11 @@ export const HomeDashboard = () => {
             </div>
           </div>
 
-          <div className="bg-[#070d14] border border-slate-800/80 rounded-xl p-4 flex items-center space-x-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center border ${
-              lccStats.isPositive 
-                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400' 
+          {/* TOP METRIC CARD: LINEAR GROWTH SLOPE */}
+          <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
+            <div className={`flex items-center justify-center w-10 h-10 rounded-lg border ${
+              dashLCC.slopeNumeric >= 0
+                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400'
                 : 'bg-rose-950/40 border-rose-500/30 text-rose-400'
             }`}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -401,11 +523,13 @@ export const HomeDashboard = () => {
               </svg>
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500 font-mono tracking-wider">Linear Growth Slope</div>
-              <div className={`text-xl font-black font-mono ${lccStats.isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {lccStats.score !== '--' 
-                  ? `${lccStats.isPositive ? '+' : ''}${Number(lccStats.slope).toFixed(2)}`
-                  : '0.00'}
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                LINEAR GROWTH SLOPE
+              </div>
+              <div className={`text-base sm:text-lg font-mono font-black ${
+                dashLCC.slopeNumeric >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}>
+                {dashLCC.slope}
               </div>
             </div>
           </div>
@@ -433,8 +557,8 @@ export const HomeDashboard = () => {
               <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider">
                 PERFORMANCE TRAJECTORY (LCC)
               </h3>
-              <p className="text-[11px] font-mono text-slate-400">
-                Progression of composite skill metric P across ingested matches
+              <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                Progression of Average Combat Score (ACS) across ingested matches
               </p>
             </div>
             <span className="px-2.5 py-1 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 rounded-lg">
@@ -446,57 +570,55 @@ export const HomeDashboard = () => {
           <div className="h-64 w-full">
             {activeGameTelemetry.length > 0 ? (
               <ResponsiveContainer height="100%" width="100%">
-                <AreaChart
+                <LineChart
                   data={activeGameTelemetry}
-                  margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                  margin={{ top: 10, right: 30, left: 0, bottom: 20 }}
                 >
-                  <defs>
-                    <linearGradient id="cyanGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#00e5ff" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#00e5ff" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="#132030" strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} opacity={0.4} />
                   <XAxis
                     dataKey="matchIndex"
                     fontFamily="monospace"
                     fontSize={10}
                     stroke="#475569"
+                    tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }}
                     tickLine={false}
                   />
                   <YAxis
-                    domain={['auto', 'auto']}
+                    domain={['dataMin - 20', 'dataMax + 20']}
                     fontFamily="monospace"
                     fontSize={10}
                     stroke="#475569"
+                    tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }}
                     tickLine={false}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#070e17',
-                      borderColor: '#1e293b',
-                      borderRadius: '8px',
-                      fontFamily: 'monospace',
-                      fontSize: '11px',
-                      color: '#00e5ff'
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="p-3 rounded-xl bg-[#04080e] border border-cyan-500/40 shadow-xl font-mono">
+                            <div className="text-xs font-black text-white mb-1">{data.matchIndex} • {data.map}</div>
+                            <div className="text-xs font-black text-cyan-400">
+                              ACS : <span className="text-white">{data.acs}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              K/D : <span className="text-emerald-400 font-bold">{data.kd}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
                     }}
-                    itemStyle={{ color: '#00e5ff' }}
                   />
-                  <Area
+                  <Line
                     type="monotone"
-                    dataKey="scoreP"
-                    stroke="#00e5ff"
+                    dataKey="acs"
+                    stroke="#22d3ee"
                     strokeWidth={2}
-                    fill="url(#cyanGradient)"
-                    fillOpacity={1}
-                    dot={{
-                      r: 4,
-                      stroke: '#00e5ff',
-                      fill: '#070e17',
-                      strokeWidth: 2
-                    }}
+                    dot={{ r: 4, fill: '#08101a', stroke: '#22d3ee', strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: '#22d3ee', stroke: '#ffffff', strokeWidth: 2 }}
                   />
-                </AreaChart>
+                </LineChart>
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center border border-dashed border-slate-800/80 rounded-xl py-12">
@@ -545,83 +667,132 @@ export const HomeDashboard = () => {
 
       {/* PROFESSIONAL SKILL MAPPING MATRIX */}
       <div className="w-full space-y-4 pt-2">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-black uppercase tracking-widest text-cyan-400 font-mono">
-            ~ PROFESSIONAL SKILL MAPPING MATRIX
-          </span>
-          <span className="text-[10px] font-mono text-slate-500 uppercase">
-            {skillScores.reviewCount > 0 
-              ? `EVALUATED FROM ${skillScores.reviewCount} PEER REVIEW${skillScores.reviewCount > 1 ? 'S' : ''}` 
-              : 'EVALUATED PEER & TELEMETRY METRICS'}
-          </span>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 text-xs font-mono font-bold text-cyan-400 uppercase tracking-wider">
+            <span>~</span> PROFESSIONAL SKILL MAPPING MATRIX
+          </div>
+          <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+            EVALUATED FROM {peerReviewsCount} PEER REVIEW{peerReviewsCount !== 1 ? 'S' : ''} ({selectedGame || 'VALORANT'})
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-          {/* 1. MATCH COMMUNICATION QUALITY (AMBER THEME) */}
-          <div className="bg-[#0b131d] border border-amber-500/25 hover:border-amber-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(245,158,11,0.06)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-white uppercase tracking-wide">Communication Skills</div>
-                <div className="text-[10px] font-bold uppercase text-amber-400 mt-0.5">
-                  {getStatusLabel(skillScores.communication).label}
-                </div>
+        {/* DYNAMIC 4-COLUMN RESPONSIVE GRID (Collapses to 3 if not IGL) */}
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${skillScores.hasLeadership ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4 w-full`}>
+
+          {/* 1. COMMUNICATION SKILLS (Amber) */}
+          <div className={`p-4 rounded-xl flex flex-col justify-between transition-all duration-300 ${
+            hasReviews
+              ? 'bg-[#070e17] border border-amber-500/30 hover:border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.06)]'
+              : 'bg-[#060b13]/60 border border-slate-800/50 opacity-40 grayscale select-none'
+          }`}>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider">COMMUNICATION SKILLS</h4>
+                <span className={`text-sm font-mono font-black ${hasReviews ? 'text-amber-400' : 'text-slate-500'}`}>{skills.comm}%</span>
               </div>
-              <span className="text-xl font-black text-amber-400">{skillScores.communication}%</span>
+              <div className={`text-[10px] font-mono font-bold uppercase mb-2 ${
+                hasReviews ? 'text-amber-400' : 'text-slate-500'
+              }`}>
+                {!hasReviews ? 'UNCALIBRATED' : skills.comm >= 85 ? 'ELITE STATUS' : skills.comm >= 70 ? 'PRO STATUS' : 'DEVELOPING STATUS'}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Relays clean spatial calls, enemy rotation warnings, and strategic audio/visual coordinates.
+              </p>
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Relays clean spatial calls, enemy rotation warnings, and strategic audio/visual coordinates.
-            </p>
-            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+            <div className="w-full h-1.5 bg-slate-800/80 rounded-full mt-4 overflow-hidden">
               <div 
-                className="h-full rounded-full bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.5)] transition-all duration-500" 
-                style={{ width: `${skillScores.communication}%` }} 
-              />
+                className={`h-full rounded-full transition-all duration-500 ${hasReviews ? 'bg-amber-400' : 'bg-slate-700'}`} 
+                style={{ width: `${skills.comm}%` }}
+              ></div>
             </div>
           </div>
 
-          {/* 2. TEAMPLAY & TACTICAL COORDINATION (EMERALD THEME) */}
-          <div className="bg-[#0b131d] border border-emerald-500/25 hover:border-emerald-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.06)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-white uppercase tracking-wide">Teamplay & Tactics</div>
-                <div className="text-[10px] font-bold uppercase text-emerald-400 mt-0.5">
-                  {getStatusLabel(skillScores.teamplay).label}
-                </div>
+          {/* 2. TEAMPLAY & TACTICS (Emerald) */}
+          <div className={`p-4 rounded-xl flex flex-col justify-between transition-all duration-300 ${
+            hasReviews
+              ? 'bg-[#070e17] border border-emerald-500/30 hover:border-emerald-400/50 shadow-[0_0_15px_rgba(16,185,129,0.06)]'
+              : 'bg-[#060b13]/60 border border-slate-800/50 opacity-40 grayscale select-none'
+          }`}>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider">TEAMPLAY & TACTICS</h4>
+                <span className={`text-sm font-mono font-black ${hasReviews ? 'text-emerald-400' : 'text-slate-500'}`}>{skills.team}%</span>
               </div>
-              <span className="text-xl font-black text-emerald-400">{skillScores.teamplay}%</span>
+              <div className={`text-[10px] font-mono font-bold uppercase mb-2 ${
+                hasReviews ? 'text-emerald-400' : 'text-slate-500'
+              }`}>
+                {!hasReviews ? 'UNCALIBRATED' : skills.team >= 85 ? 'ELITE STATUS' : skills.team >= 70 ? 'PRO STATUS' : 'DEVELOPING STATUS'}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Executes coordinated site entries, trade fragging, crossfire positioning, and optimal utility timing.
+              </p>
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Executes coordinated site entries, trade fragging, crossfire positioning, and optimal utility timing.
-            </p>
-            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+            <div className="w-full h-1.5 bg-slate-800/80 rounded-full mt-4 overflow-hidden">
               <div 
-                className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-500" 
-                style={{ width: `${skillScores.teamplay}%` }} 
-              />
+                className={`h-full rounded-full transition-all duration-500 ${hasReviews ? 'bg-emerald-400' : 'bg-slate-700'}`} 
+                style={{ width: `${skills.team}%` }}
+              ></div>
             </div>
           </div>
 
-          {/* 3. MECHANICAL PRECISION & EXECUTION (CYAN THEME) */}
-          <div className="bg-[#0b131d] border border-cyan-500/25 hover:border-cyan-400/50 transition-all duration-300 p-5 rounded-xl space-y-3 shadow-[0_0_15px_rgba(6,182,212,0.06)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-white uppercase tracking-wide">Mechanical Precision</div>
-                <div className="text-[10px] font-bold uppercase text-cyan-400 mt-0.5">
-                  {getStatusLabel(skillScores.mechanical).label}
-                </div>
+          {/* 3. MECHANICAL PRECISION (Cyan) */}
+          <div className={`p-4 rounded-xl flex flex-col justify-between transition-all duration-300 ${
+            hasReviews
+              ? 'bg-[#070e17] border border-cyan-500/30 hover:border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.06)]'
+              : 'bg-[#060b13]/60 border border-slate-800/50 opacity-40 grayscale select-none'
+          }`}>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider">MECHANICAL PRECISION</h4>
+                <span className={`text-sm font-mono font-black ${hasReviews ? 'text-cyan-400' : 'text-slate-500'}`}>{skills.mech}%</span>
               </div>
-              <span className="text-xl font-black text-cyan-400">{skillScores.mechanical}%</span>
+              <div className={`text-[10px] font-mono font-bold uppercase mb-2 ${
+                hasReviews ? 'text-cyan-400' : 'text-slate-500'
+              }`}>
+                {!hasReviews ? 'UNCALIBRATED' : skills.mech >= 85 ? 'ELITE STATUS' : skills.mech >= 70 ? 'PRO STATUS' : 'DEVELOPING STATUS'}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Maintains crosshair placement, first-bullet accuracy, recoil reset control, and clutch composure.
+              </p>
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Maintains crosshair placement, first-bullet accuracy, recoil reset control, and clutch composure.
-            </p>
-            <div className="w-full bg-[#070d14] h-2 rounded-full overflow-hidden border border-slate-800">
+            <div className="w-full h-1.5 bg-slate-800/80 rounded-full mt-4 overflow-hidden">
               <div 
-                className="h-full rounded-full bg-gradient-to-r from-cyan-600 to-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.5)] transition-all duration-500" 
-                style={{ width: `${skillScores.mechanical}%` }} 
-              />
+                className={`h-full rounded-full transition-all duration-500 ${hasReviews ? 'bg-cyan-400' : 'bg-slate-700'}`} 
+                style={{ width: `${skills.mech}%` }}
+              ></div>
             </div>
           </div>
+
+          {/* 4. STRATEGIC LEADERSHIP & IN-GAME SHOTCALLING (Purple) */}
+          {skillScores.hasLeadership && (
+            <div className={`p-4 rounded-xl flex flex-col justify-between transition-all duration-300 ${
+              hasReviews
+                ? 'bg-[#070e17] border border-purple-500/30 hover:border-purple-400/50 shadow-[0_0_15px_rgba(168,85,247,0.08)]'
+                : 'bg-[#060b13]/60 border border-slate-800/50 opacity-40 grayscale select-none'
+            }`}>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="text-xs font-black text-white uppercase tracking-wider">STRATEGIC LEADERSHIP</h4>
+                  <span className={`text-sm font-mono font-black ${hasReviews ? 'text-purple-400' : 'text-slate-500'}`}>{skills.lead}%</span>
+                </div>
+                <div className={`text-[10px] font-mono font-bold uppercase mb-2 ${
+                  hasReviews ? 'text-purple-400' : 'text-slate-500'
+                }`}>
+                  {!hasReviews ? 'UNCALIBRATED' : skills.lead >= 85 ? 'ELITE STATUS' : skills.lead >= 70 ? 'PRO STATUS' : 'DEVELOPING STATUS'}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Executes decisive in-game shotcalling, mid-round macro adaptation, and team economy management.
+                </p>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800/80 rounded-full mt-4 overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${hasReviews ? 'bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,0.8)]' : 'bg-slate-700'}`} 
+                  style={{ width: `${skills.lead}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>

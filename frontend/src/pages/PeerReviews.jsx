@@ -131,9 +131,20 @@ export const PeerReviews = () => {
       // 2. Fetch peer reviews received by the user specifically for these matches
       const { data: reviews, error: revErr } = await supabase
         .from('peer_reviews')
-        .select('communication_rating, teamplay_rating, mechanical_rating, overall_rating')
+        .select('communication_rating, teamplay_rating, mechanical_rating, leadership_rating, overall_rating')
         .eq('target_user_id', user.id)
         .in('match_id', currentWindowMatchIds);
+
+      // Check if user is an IGL in any of their current teams for the selected title
+      const { data: userRoleData } = await supabase
+        .from('team_members')
+        .select('role, is_leader, is_captain, teams!inner(game_title)')
+        .eq('user_id', user.id)
+        .eq('teams.game_title', selectedTitle);
+
+      const isCurrentUserIGL = userRoleData?.some(
+        (r) => r.is_leader || r.is_captain || String(r.role).toUpperCase().includes('IGL') || String(r.role).toUpperCase().includes('CAPTAIN')
+      ) || false;
 
       if (!revErr && reviews && reviews.length > 0) {
         const count = reviews.length;
@@ -141,6 +152,11 @@ export const PeerReviews = () => {
         const avgComm = reviews.reduce((acc, r) => acc + Number(r.communication_rating), 0) / count;
         const avgTeam = reviews.reduce((acc, r) => acc + Number(r.teamplay_rating), 0) / count;
         const avgMech = reviews.reduce((acc, r) => acc + Number(r.mechanical_rating), 0) / count;
+        
+        const leadReviews = reviews.filter(r => r.leadership_rating !== null && r.leadership_rating !== undefined);
+        const avgLead = leadReviews.length > 0 
+          ? leadReviews.reduce((acc, r) => acc + Number(r.leadership_rating), 0) / leadReviews.length 
+          : 0;
 
         setMyRatingData({
           average: parseFloat(avgOverall.toFixed(1)),
@@ -148,6 +164,8 @@ export const PeerReviews = () => {
           commAvg: parseFloat(avgComm.toFixed(1)),
           teamAvg: parseFloat(avgTeam.toFixed(1)),
           mechAvg: parseFloat(avgMech.toFixed(1)),
+          leadAvg: parseFloat(avgLead.toFixed(1)),
+          isIGL: isCurrentUserIGL || leadReviews.length > 0,
           matchCountInCycle,
         });
       } else {
@@ -157,6 +175,8 @@ export const PeerReviews = () => {
           commAvg: 5.0,
           teamAvg: 5.0,
           mechAvg: 5.0,
+          leadAvg: 5.0,
+          isIGL: isCurrentUserIGL,
           matchCountInCycle,
         });
       }
@@ -183,10 +203,18 @@ export const PeerReviews = () => {
   // Find single selected player object matching selectedTeammateId
   const selectedTeammate = activeTeammates?.find(t => t.id === selectedTeammateId);
 
+  const isTargetIGL = Boolean(
+    selectedTeammate?.is_leader || 
+    selectedTeammate?.is_captain || 
+    String(selectedTeammate?.role || '').toUpperCase().includes('IGL') ||
+    String(selectedTeammate?.role || '').toUpperCase().includes('CAPTAIN')
+  );
+
   // Form input states
   const [commScore, setCommScore] = useState(5);
   const [relScore, setRelScore] = useState(5);
   const [compScore, setCompScore] = useState(5);
+  const [leadScore, setLeadScore] = useState(5);
   const [comments, setComments] = useState('');
 
   // UI state feedback
@@ -291,6 +319,8 @@ export const PeerReviews = () => {
       communication_score: commScore,
       reliability_score: relScore,
       composure_score: compScore,
+      leadership_score: isTargetIGL ? leadScore : null,
+      isTargetIGL: isTargetIGL,
       constructive_comment: comments,
       match_id: currentTargetStatus?.matchId
     });
@@ -306,6 +336,7 @@ export const PeerReviews = () => {
       setCommScore(5);
       setRelScore(5);
       setCompScore(5);
+      setLeadScore(5);
       fetchMyPeerRatings();
 
       // Update state locally
@@ -434,45 +465,83 @@ export const PeerReviews = () => {
       </div>
 
       {/* 2. TOP PEER RATING SUMMARY BANNER */}
-      <div className="p-5 sm:p-6 mb-8 rounded-2xl bg-[#070e17] border border-slate-800/80 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+      <div className={`p-4 sm:p-5 rounded-2xl border transition-all mb-8 shadow-xl ${
+        myRatingData.totalReviews > 0 ? 'bg-[#070e17] border-slate-800/80' : 'bg-[#060b13]/60 border-slate-800/50'
+      }`}>
         {/* Left: Overall Rating & Stars */}
-        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
-          <div className="flex items-baseline gap-1.5 font-mono">
-            <span className="text-2xl sm:text-3xl font-black text-cyan-400">
-              {myRatingData.average.toFixed(1)}
-            </span>
-            <span className="text-xs font-bold text-slate-500">/ 5.0</span>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+            <div className="flex items-baseline gap-1.5 font-mono">
+              <span className={`text-2xl sm:text-3xl font-black transition-colors ${
+                myRatingData.totalReviews > 0 ? 'text-cyan-400' : 'text-slate-500'
+              }`}>
+                {myRatingData.totalReviews > 0 ? myRatingData.average.toFixed(1) : '0.0'}
+              </span>
+              <span className={`text-xs font-bold ${myRatingData.totalReviews > 0 ? 'text-slate-500' : 'text-slate-600'}`}>/ 5.0</span>
+            </div>
 
-          <div className="space-y-1">
-            {/* Star Icons */}
-            <div className="flex items-center gap-1 text-cyan-400 text-xs">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <span
-                  key={star}
-                  className={star <= Math.round(myRatingData.average) ? 'text-cyan-400' : 'text-slate-600'}
-                >
-                  ★
+            <div className="space-y-1">
+              {/* Star Icons */}
+              <div className={`flex items-center gap-1 text-xs transition-colors ${
+                myRatingData.totalReviews > 0 ? 'text-cyan-400' : 'text-slate-700'
+              }`}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <span
+                    key={star}
+                    className={
+                      myRatingData.totalReviews > 0 
+                        ? (star <= Math.round(myRatingData.average) ? 'text-cyan-400' : 'text-slate-600')
+                        : 'text-slate-700'
+                    }
+                  >
+                    ★
+                  </span>
+                ))}
+              </div>
+              <div className="text-[10px] font-mono text-slate-500">
+                MY PEER RATING • {myRatingData.totalReviews} REVIEWS • <span className={myRatingData.totalReviews > 0 ? 'text-cyan-400 font-bold' : 'text-slate-600'}>
+                  CYCLE: {myRatingData.totalReviews > 0 ? (myRatingData.matchCountInCycle + '/5') : '0/5'} MATCHES
                 </span>
-              ))}
-            </div>
-            <div className="text-[10px] font-mono text-slate-400">
-              MY PEER RATING • {myRatingData.totalReviews} REVIEWS • <span className="text-cyan-400 font-bold">CYCLE: {myRatingData.matchCountInCycle}/5 MATCHES</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Right: Dimension Badges with generous gap */}
-        <div className="flex items-center gap-2.5 flex-wrap font-mono text-[11px] font-bold">
-          <span className="px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-400">
-            COMM: {myRatingData.commAvg.toFixed(1)} ★
-          </span>
-          <span className="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
-            TEAM: {myRatingData.teamAvg.toFixed(1)} ★
-          </span>
-          <span className="px-3 py-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-400">
-            MECH: {myRatingData.mechAvg.toFixed(1)} ★
-          </span>
+          {/* Right: Dimension Badges with generous gap */}
+          <div className="flex items-center gap-2.5 flex-wrap font-mono text-[11px] font-bold">
+            <span className={`px-3 py-1.5 rounded-lg border transition-all ${
+              myRatingData.totalReviews > 0
+                ? 'bg-amber-950/40 border-amber-500/30 text-amber-400'
+                : 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-50 select-none'
+            }`}>
+              COMM: {myRatingData.totalReviews > 0 ? myRatingData.commAvg.toFixed(1) : '0.0'} ★
+            </span>
+            <span className={`px-3 py-1.5 rounded-lg border transition-all ${
+              myRatingData.totalReviews > 0
+                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400'
+                : 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-50 select-none'
+            }`}>
+              TEAM: {myRatingData.totalReviews > 0 ? myRatingData.teamAvg.toFixed(1) : '0.0'} ★
+            </span>
+            <span className={`px-3 py-1.5 rounded-lg border transition-all ${
+              myRatingData.totalReviews > 0
+                ? 'bg-cyan-950/40 border-cyan-500/30 text-cyan-400'
+                : 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-50 select-none'
+            }`}>
+              MECH: {myRatingData.totalReviews > 0 ? myRatingData.mechAvg.toFixed(1) : '0.0'} ★
+            </span>
+            {myRatingData.isIGL && myRatingData.totalReviews > 0 ? (
+              <span className="px-3 py-1.5 rounded-lg bg-purple-950/50 border border-purple-500/40 text-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.15)] transition-all">
+                LEAD: {myRatingData.leadAvg.toFixed(1)} ★
+              </span>
+            ) : (
+              <span 
+                className="px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-500 opacity-60 cursor-not-allowed select-none transition-all"
+                title="Leadership rating calibrated exclusively for designated squad IGLs"
+              >
+                LEAD: 0.0 ★
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -703,6 +772,54 @@ export const PeerReviews = () => {
                  <span>1 - Inconsistent</span>
                  <span>3 - Solid Fundamentals</span>
                  <span>5 - Flawless Execution</span>
+               </div>
+             </div>
+
+             {/* 4TH DIMENSION: STRATEGIC LEADERSHIP & SHOTCALLING */}
+             <div className={`p-4 rounded-xl border transition-all ${
+               isTargetIGL 
+                 ? 'bg-[#08111e] dark:bg-slate-950/60 border-cyan-500/30 hover:border-cyan-500/50' 
+                 : 'bg-[#060b13]/60 dark:bg-slate-900/40 border-slate-800/50 opacity-60'
+             }`}>
+               <div className="flex items-center justify-between mb-2">
+                 <div className="flex items-center gap-2">
+                   <span className={`w-2 h-2 rounded-full ${isTargetIGL ? 'bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)] animate-pulse' : 'bg-slate-600'}`}></span>
+                   <label className={`text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-2 ${isTargetIGL ? 'text-cyan-400' : 'text-slate-500'}`}>
+                     Strategic Leadership & In-Game Shotcalling
+                   </label>
+                   {!isTargetIGL && (
+                     <span className="px-2 py-0.5 text-[9px] font-mono text-slate-400 bg-slate-800/80 rounded border border-slate-700">
+                       🔒 IGL ONLY
+                     </span>
+                   )}
+                 </div>
+
+                 <span className={`px-2.5 py-0.5 rounded font-mono text-xs font-bold ${
+                   isTargetIGL 
+                     ? 'bg-cyan-950/80 border border-cyan-500/40 text-cyan-300' 
+                     : 'bg-slate-800 border border-slate-700 text-slate-500'
+                 }`}>
+                   {isTargetIGL ? `${leadScore} / 5 Stars` : 'N/A'}
+                 </span>
+               </div>
+               
+               <input
+                 type="range"
+                 min="1"
+                 max="5"
+                 step="1"
+                 disabled={!isTargetIGL || isLocked || isSubmitting}
+                 value={isTargetIGL ? leadScore : 0}
+                 onChange={(e) => setLeadScore(Number(e.target.value))}
+                 className={`w-full h-3.5 rounded-lg appearance-none ${
+                   isTargetIGL && !isLocked && !isSubmitting ? 'cursor-pointer accent-cyan-400' : 'opacity-40 cursor-not-allowed bg-slate-800'
+                 }`}
+               />
+
+               <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
+                 <span>1 - Hesitant / Poor Macro</span>
+                 <span>3 - Standard Calling</span>
+                 <span>5 - Decisive Master Strategist</span>
                </div>
              </div>
 

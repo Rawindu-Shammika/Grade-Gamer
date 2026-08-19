@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import useAuth from '../hooks/useAuth';
+import { calculateLCCMetrics } from '../utils/lccCalculator';
+import { getActiveCycleMatches } from '../utils/cycleFilter';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -33,6 +35,47 @@ export default function GameData() {
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
+
+  const [seasonInfo, setSeasonInfo] = useState({
+    fullSeasonTitle: 'VALORANT ACT CYCLE',
+    daysRemaining: 56,
+  });
+
+  useEffect(() => {
+    const fetchSeason = async () => {
+      if (String(selectedGame || '').toLowerCase().includes('val')) {
+        try {
+          const res = await fetch('https://valorant-api.com/v1/seasons');
+          const json = await res.json();
+          if (json.status === 200 && Array.isArray(json.data)) {
+            const now = new Date();
+            const activeAct = json.data.find(
+              (s) => s.parentUuid && new Date(s.startTime) <= now && new Date(s.endTime) >= now
+            );
+
+            if (activeAct) {
+              const parentEpisode = json.data.find((s) => s.uuid === activeAct.parentUuid);
+              const ep = parentEpisode ? parentEpisode.displayName.toUpperCase() : '';
+              const act = activeAct.displayName.toUpperCase();
+              const days = Math.max(
+                0,
+                Math.ceil((new Date(activeAct.endTime) - now) / (1000 * 60 * 60 * 24))
+              );
+
+              setSeasonInfo({
+                fullSeasonTitle: ep ? `${ep} // ${act}` : act,
+                daysRemaining: days,
+              });
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load official season:', e);
+        }
+      }
+    };
+
+    fetchSeason();
+  }, [selectedGame]);
 
   // Carousel state & rotation logic
   const [bannerIndex, setBannerIndex] = useState(0);
@@ -168,31 +211,13 @@ export default function GameData() {
     return rawMatches;
   }, [matchHistory, selectedGame]);
 
-  // 2. ISOLATED LCC CALCULATION PER GAME
-  const lccStats = React.useMemo(() => {
-    if (activeGameLogs.length < 2) {
-      return {
-        baseline: 'Pending',
-        current: `${activeGameLogs.length}/5 Sampled`,
-        delta: activeGameLogs.length,
-        slope: '0.0',
-        isCalibrated: false
-      };
-    }
+  // Apply 8-Week Act Cycle Logic
+  const { activeMatches: cycleMatches, cycleNumber, daysRemaining } = React.useMemo(() => {
+    return getActiveCycleMatches(activeGameLogs, selectedGame);
+  }, [activeGameLogs, selectedGame]);
 
-    const scores = activeGameLogs.map((l) => Number(l.calculated_rating || l.score || l.performance_score || 50));
-    const baseline = (scores.slice(0, 5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
-    const current = (scores.slice(-5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
-    const slope = ((Number(current) - Number(baseline)) / Math.max(1, activeGameLogs.length)).toFixed(2);
-
-    return {
-      baseline: `${baseline} Pts`,
-      current: `${current} Pts`,
-      delta: activeGameLogs.length,
-      slope,
-      isCalibrated: true
-    };
-  }, [activeGameLogs]);
+  // Compute LCC strictly using ACS via unified calculator on active cycle matches
+  const lccResults = React.useMemo(() => calculateLCCMetrics(cycleMatches), [cycleMatches]);
 
   // 4. Ingestion Handler
   const handleIngestMatch = async (type) => {
@@ -423,38 +448,45 @@ export default function GameData() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">P_baseline (Initial 5 Matches)</span>
-            <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccStats.isCalibrated ? lccStats.baseline : `${activeGameLogs.length}/5 Sampled`}
-            </p>
+          {/* 1. P_BASELINE (TOP 5 MATCHES) */}
+          <div className="p-4 rounded-xl bg-[#050b13] border border-slate-800/60">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+              P_BASELINE (INITIAL 5 MATCHES)
+            </div>
+            <div className="text-xl font-mono font-black text-white">
+              {lccResults.pBaseline}
+            </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">P_current (Recent 5 Matches)</span>
-            <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccStats.isCalibrated ? lccStats.current : 'Pending Samples'}
-            </p>
+          {/* 2. P_CURRENT (BOTTOM 5 MATCHES) */}
+          <div className="p-4 rounded-xl bg-[#050b13] border border-slate-800/60">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+              P_CURRENT (RECENT 5 MATCHES)
+            </div>
+            <div className="text-xl font-mono font-black text-white">
+              {lccResults.pCurrent}
+            </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">N (Growth Delta Period)</span>
-            <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccStats.isCalibrated ? `${lccStats.delta} Matches` : `${activeGameLogs.length} Matches`}
-            </p>
+          {/* 3. N DELTA */}
+          <div className="p-4 rounded-xl bg-[#050b13] border border-slate-800/60">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+              N (GROWTH DELTA PERIOD)
+            </div>
+            <div className="text-xl font-mono font-black text-white">
+              {lccResults.nMatches} Matches
+            </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Linear Growth Slope</span>
-            <div className="flex items-center gap-2 mt-1">
-              <p className={`text-2xl font-extrabold font-mono ${Number(lccStats.slope) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {Number(lccStats.slope) >= 0 ? `+${lccStats.slope}` : lccStats.slope}
-              </p>
-              {Number(lccStats.slope) > 0 && activeGameLogs.length >= 10 && (
-                <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 uppercase">
-                  ADAPTABILITY UNLOCKED
-                </span>
-              )}
+          {/* 4. LINEAR GROWTH SLOPE */}
+          <div className="p-4 rounded-xl bg-[#050b13] border border-slate-800/60">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+              LINEAR GROWTH SLOPE
+            </div>
+            <div className={`text-xl font-mono font-black ${
+              lccResults.slopeNumeric >= 0 ? 'text-emerald-400' : 'text-rose-400'
+            }`}>
+              {lccResults.slope}
             </div>
           </div>
         </div>
@@ -483,6 +515,21 @@ export default function GameData() {
             <p className="text-xs font-mono text-slate-500 dark:text-slate-400 leading-relaxed">
               Real-time telemetry extraction active for <strong>{selectedGame}</strong> via automated webhooks and memory stream simulator.
             </p>
+
+            {/* OFFICIAL VALORANT ACT CYCLE BANNER */}
+            {String(selectedGame || '').toLowerCase().includes('val') && (
+              <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-[#050b13] border border-cyan-500/30 mb-4 font-mono text-xs shadow-[0_0_15px_rgba(34,211,238,0.05)]">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0"></span>
+                <span className="text-slate-400">
+                  CURRENT ACT CYCLE:{' '}
+                  <strong className="text-white font-black tracking-wider">
+                    {seasonInfo.fullSeasonTitle}
+                  </strong>
+                </span>
+                <span className="text-slate-600">•</span>
+                <span className="text-cyan-400 font-bold">{seasonInfo.daysRemaining} Days Remaining</span>
+              </div>
+            )}
 
             {selectedGame === 'F1 25' || selectedGame === 'Assetto Corsa' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
@@ -783,11 +830,11 @@ export default function GameData() {
             </h3>
           </div>
           <span className="text-xs font-mono bg-[#070b10] border border-slate-800 text-cyan-400 px-3 py-1 rounded-lg">
-            {activeGameLogs.length} Packets Ingested
+            {cycleMatches.length} Packets Ingested
           </span>
         </div>
 
-        {activeGameLogs.length === 0 ? (
+        {cycleMatches.length === 0 ? (
           <div className="text-center py-12 border border-dashed border-slate-800/80 rounded-xl bg-[#070d14]/50 space-y-2">
             <div className="text-2xl">📡</div>
             <div className="text-sm font-bold text-slate-300">No {selectedGame} Telemetry Ingested</div>
@@ -797,7 +844,7 @@ export default function GameData() {
           </div>
         ) : (
           <div className="space-y-3">
-            {activeGameLogs.map((log, idx) => {
+            {cycleMatches.map((log, idx) => {
               if (selectedGame === 'Valorant') {
                 const roundsWon = log.metrics_payload?.rounds_won ?? log.rounds_won;
                 const roundsLost = log.metrics_payload?.rounds_lost ?? log.rounds_lost;
