@@ -348,7 +348,7 @@ export const PeerReviews = () => {
     }
   };
 
-  const cardClass = 'bg-[#121620] border border-slate-800 p-6 md:p-8 rounded-2xl shadow-xl space-y-6 relative overflow-hidden';
+  const cardClass = 'bg-[#070e17] border border-slate-800/80 p-6 md:p-8 rounded-2xl shadow-xl space-y-6 relative overflow-hidden';
 
   const targetUserId = selectedTeammate?.user_id || selectedTeammate?.id;
   const currentTargetStatus = targetUserId ? reviewStatus[targetUserId] : null;
@@ -415,15 +415,15 @@ export const PeerReviews = () => {
         </div>
       </div>
 
-      {/* Block 3: Category Selector Dropdown */}
-      <div className="flex flex-col space-y-2">
-        <label className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 font-bold">
-          SELECT ACTIVE ESPORTS TITLE
+      {/* 1. ESPORTS TITLE SELECTOR */}
+      <div className="mb-6">
+        <label className="block text-[11px] font-mono font-bold text-slate-400 uppercase tracking-widest mb-2">
+          Select Active Esports Title
         </label>
         <select
           value={selectedTitle}
           onChange={(e) => setSelectedTitle(e.target.value)}
-          className="w-full max-w-xs px-4 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-cyan-400 cursor-pointer uppercase"
+          className="w-full sm:w-72 bg-[#070e17] border border-slate-800 text-white text-xs font-mono font-bold px-4 py-2.5 rounded-xl focus:border-cyan-500/50 outline-none transition uppercase cursor-pointer"
         >
           {registeredTitles.map((title) => (
             <option key={title} value={title} className="bg-slate-900 text-white">
@@ -433,66 +433,59 @@ export const PeerReviews = () => {
         </select>
       </div>
 
-      {/* Block 4: Rating Metric Tracker Card */}
-      <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/90 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-6 shadow-md dark:shadow-xl">
-        {/* Left: Overall Star Rating */}
-        <div className="flex items-center gap-6">
-          <div className="flex items-baseline gap-1">
-            <span className="text-4xl font-extrabold font-mono text-cyan-400">
+      {/* 2. TOP PEER RATING SUMMARY BANNER */}
+      <div className="p-5 sm:p-6 mb-8 rounded-2xl bg-[#070e17] border border-slate-800/80 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+        {/* Left: Overall Rating & Stars */}
+        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+          <div className="flex items-baseline gap-1.5 font-mono">
+            <span className="text-2xl sm:text-3xl font-black text-cyan-400">
               {myRatingData.average.toFixed(1)}
             </span>
-            <span className="text-sm font-mono text-slate-500">/ 5.0</span>
+            <span className="text-xs font-bold text-slate-500">/ 5.0</span>
           </div>
 
-          <div>
-            <div className="flex items-center gap-1">
+          <div className="space-y-1">
+            {/* Star Icons */}
+            <div className="flex items-center gap-1 text-cyan-400 text-xs">
               {[1, 2, 3, 4, 5].map((star) => (
                 <span
                   key={star}
-                  className={`text-lg ${
-                    star <= Math.round(myRatingData.average)
-                      ? 'text-cyan-400'
-                      : 'text-slate-700'
-                  }`}
+                  className={star <= Math.round(myRatingData.average) ? 'text-cyan-400' : 'text-slate-600'}
                 >
                   ★
                 </span>
               ))}
             </div>
-            <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-1">
-              <span>MY PEER RATING • {myRatingData.totalReviews} REVIEWS</span>
-              <span>•</span>
-              <span className="text-cyan-300 font-bold">
-                CYCLE: {myRatingData.matchCountInCycle}/5 MATCHES
-              </span>
+            <div className="text-[10px] font-mono text-slate-400">
+              MY PEER RATING • {myRatingData.totalReviews} REVIEWS • <span className="text-cyan-400 font-bold">CYCLE: {myRatingData.matchCountInCycle}/5 MATCHES</span>
             </div>
           </div>
         </div>
 
-        {/* Right: Sub-metric Breakdown Badges */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="px-3 py-1.5 rounded-lg bg-amber-950/50 border border-amber-500/40 text-amber-300 font-mono text-xs font-bold">
+        {/* Right: Dimension Badges with generous gap */}
+        <div className="flex items-center gap-2.5 flex-wrap font-mono text-[11px] font-bold">
+          <span className="px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-400">
             COMM: {myRatingData.commAvg.toFixed(1)} ★
           </span>
-          <span className="px-3 py-1.5 rounded-lg bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 font-mono text-xs font-bold">
+          <span className="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
             TEAM: {myRatingData.teamAvg.toFixed(1)} ★
           </span>
-          <span className="px-3 py-1.5 rounded-lg bg-cyan-950/50 border border-cyan-500/40 text-cyan-300 font-mono text-xs font-bold">
+          <span className="px-3 py-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-400">
             MECH: {myRatingData.mechAvg.toFixed(1)} ★
           </span>
         </div>
       </div>
 
-      {/* Block 5: Workspace Split Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      {/* 3. TWO-COLUMN EVALUATION WORKSPACE */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* Left Column: Active Team Roster */}
+        {/* LEFT COLUMN: ACTIVE TEAM ROSTER (5 cols) */}
         <div className="lg:col-span-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-[#00b4d8]" />
-            <h3 className="text-xs font-black uppercase tracking-widest text-[#00b4d8] font-mono">
-              Active Team Roster
-            </h3>
+          <div className="flex items-center gap-2 text-xs font-mono font-bold text-cyan-400 uppercase tracking-wider">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            ACTIVE TEAM ROSTER
           </div>
 
           <div className="space-y-3">
@@ -508,10 +501,10 @@ export const PeerReviews = () => {
                       setSelectedTeammateId(teammate.id);
                       setStatusMessage(null);
                     }}
-                    className={`p-5 rounded-2xl transition-all cursor-pointer flex items-center justify-between gap-4 backdrop-blur-md ${
+                    className={`p-4 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-4 backdrop-blur-md ${
                       isSelected
-                        ? 'border-2 border-cyan-500 bg-white dark:bg-cyan-950/20 shadow-[0_0_20px_rgba(6,182,212,0.15)]'
-                        : 'border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#161b26]/60 hover:bg-slate-100 dark:hover:bg-slate-800/20'
+                        ? 'border border-cyan-500 bg-cyan-950/20 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
+                        : 'border border-slate-800/80 bg-[#070e17] hover:bg-[#0a1320] hover:border-slate-700'
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -536,16 +529,16 @@ export const PeerReviews = () => {
                     
                     <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                       {status?.hasReviewed ? (
-                        <span className="px-2 py-0.5 rounded text-[8px] font-mono font-bold bg-slate-800 border border-slate-700 text-slate-400 uppercase tracking-wide">
-                          CALIBRATED (REVIEW SUBMITTED)
+                        <span className="px-2 py-0.5 rounded text-[8px] font-mono font-bold bg-slate-850 border border-slate-700 text-slate-400 uppercase tracking-wide">
+                          CALIBRATED
                         </span>
                       ) : status?.isEligible ? (
                         <span className="px-2 py-0.5 rounded text-[8px] font-mono font-bold bg-cyan-950 border border-cyan-500/50 text-cyan-300 uppercase tracking-wide">
-                          READY FOR REVIEW
+                          READY
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded text-[8px] font-mono font-bold bg-amber-950/40 border border-amber-500/30 text-amber-400 uppercase tracking-wide">
-                          LOCKED (NO COMPLETED EVENT)
+                          LOCKED
                         </span>
                       )}
 
@@ -570,25 +563,25 @@ export const PeerReviews = () => {
           </div>
         </div>
 
-        {/* Right Column: Anti Abuse Evaluation Form */}
+        {/* RIGHT COLUMN: EVALUATION PANEL (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
           
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-[#121620]/40 border border-slate-200 dark:border-slate-800/80 p-3 rounded-2xl">
-            <div className="flex items-center gap-2">
-              <Gamepad2 className="w-4 h-4 text-[#00b4d8]" />
-              <h3 className="text-xs font-black uppercase tracking-widest text-[#00b4d8] font-mono">
-                Evaluation Panel
-              </h3>
+          <div className="flex items-center justify-between text-xs font-mono font-bold tracking-wider">
+            <div className="flex items-center gap-2 text-cyan-400 uppercase">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              EVALUATION PANEL
             </div>
             
             <div className="flex flex-wrap items-center gap-2">
               {selectedTeammate && (
-                <span className="text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-2.5 py-1 rounded-lg">
-                  EVALUATING TEAMMATE: <span className="text-white uppercase">{selectedTeammate.name}</span> ({selectedTeammate.role})
+                <span className="px-2.5 py-0.5 text-[10px] text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 rounded-md">
+                  EVALUATING TEAMMATE: {selectedTeammate.name} ({selectedTeammate.role})
                 </span>
               )}
-              <span className="bg-red-500/10 border border-red-500/20 text-red-400 px-2.5 py-1 rounded-lg text-[9px] font-mono font-bold uppercase tracking-widest">
-                Double Blind Anonymous
+              <span className="px-2.5 py-0.5 text-[10px] text-rose-400 bg-rose-950/60 border border-rose-500/30 rounded-md uppercase">
+                DOUBLE-BLIND ANONYMOUS
               </span>
             </div>
           </div>
@@ -603,9 +596,11 @@ export const PeerReviews = () => {
                     Scanning Match History Lineups...
                   </div>
                 ) : currentTargetStatus?.hasReviewed ? (
-                  <div className="p-3 mb-4 rounded-xl bg-slate-900/90 border border-slate-700 text-slate-300 font-mono text-xs flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-slate-400"/>
-                    <span>Review submitted for <strong>"{currentTargetStatus.eventName}"</strong>. Locked until the next event is completed.</span>
+                  <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-[#0b131f] border border-slate-800 text-xs font-mono text-slate-400">
+                    <svg className="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <span>Review submitted for this teammate. Locked until next match is completed.</span>
                   </div>
                 ) : !currentTargetStatus?.isEligible ? (
                   <div className="p-3 mb-4 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300 font-mono text-xs flex items-center gap-2">

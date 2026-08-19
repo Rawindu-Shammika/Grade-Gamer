@@ -58,8 +58,8 @@ app.post('/api/sync-valorant', async (req, res) => {
       }
     }
 
-    // HenrikDev Valorant V3 matches endpoint
-    const url = `https://api.henrikdev.xyz/valorant/v3/matches/${region}/${encodedName}/${encodedTag}?size=1`;
+    // HenrikDev Valorant V3 matches endpoint with strict competitive mode filter
+    const url = `https://api.henrikdev.xyz/valorant/v3/matches/${region}/${encodedName}/${encodedTag}?mode=competitive&size=1`;
     console.log(`[HenrikDev API Request]: ${url}`);
 
     const response = await fetch(url, {
@@ -138,12 +138,14 @@ app.post('/api/sync-valorant', async (req, res) => {
       match_id: matchId,
       outcome: hasWon ? 'VICTORY' : 'DEFEAT',
       score_rounds: `${roundsWon} : ${roundsLost}`,
+      rounds_won: roundsWon,
+      rounds_lost: roundsLost,
       map: latestMatch.metadata?.map || 'Competitive Arena',
       mode: latestMatch.metadata?.mode || 'Competitive',
       agent: player.character || 'Reyna',
       acs,
       kd,
-      hs_percent: hsPct,
+      hs_percentage: hsPct,
       rank: player.currenttier_patched || 'Platinum 2',
       elo: player.ranking_in_tier || 50,
       kills,

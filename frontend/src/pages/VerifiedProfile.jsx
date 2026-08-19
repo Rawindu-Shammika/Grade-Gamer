@@ -6,12 +6,13 @@ import { getUiImageUrl } from '../utils/supabaseAssets';
 import { VerifiedResumeCard } from '../components/resume/VerifiedResumeCard';
 import { supabase } from '../services/supabaseClient';
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
-const SUPABASE_UI_BASE = `${cleanUrl}/storage/v1/object/public/UI`;
-const RESUME_BANNER_IMAGES = [
-  supabase.storage.from('UI').getPublicUrl('DOTA iii.avif').data.publicUrl,
-  supabase.storage.from('UI').getPublicUrl('FC ii.jpg').data.publicUrl,
+// Supabase storage UI bucket reference
+const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
+
+// Only using the 2 requested images
+const RESUME_BANNERS = [
+  'DOTA iii.avif',
+  'APEX ii.jpg',
 ];
 
 /**
@@ -98,7 +99,7 @@ export const VerifiedProfile = () => {
   };
 
   const handleNextBanner = useCallback(() => {
-    setBannerIndex((prev) => (prev + 1) % RESUME_BANNER_IMAGES.length);
+    setBannerIndex((prev) => (prev + 1) % RESUME_BANNERS.length);
   }, []);
 
   const [profileSettings, setProfileSettings] = useState({
@@ -157,7 +158,7 @@ export const VerifiedProfile = () => {
   };
 
   useEffect(() => {
-    if (RESUME_BANNER_IMAGES.length <= 1) return;
+    if (RESUME_BANNERS.length <= 1) return;
     const timer = setInterval(handleNextBanner, 6000);
     return () => clearInterval(timer);
   }, [handleNextBanner]);
@@ -189,50 +190,63 @@ export const VerifiedProfile = () => {
   return (
     <div className="bg-slate-50 dark:bg-[#0b0f19] min-h-screen text-slate-900 dark:text-slate-200 p-8 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16">
 
-      {/* TOP HERO BANNER (CLEAN - NO EMBEDDED BUTTONS) */}
-      <div className="relative w-full h-52 sm:h-60 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl flex items-center mb-4 group">
-        {/* Banner Image */}
-        <img
-          src={RESUME_BANNER_IMAGES[bannerIndex]}
-          alt="Verified Resume Header Banner"
-          className="w-full h-full object-cover object-[center_30%] absolute inset-0 opacity-85 transition-opacity duration-700 ease-in-out"
-          onError={(e) => {
-            const fallbackFilename = bannerIndex === 0 ? 'DOTA%20iii.avif' : 'FC%20ii.jpg';
-            e.target.src = supabase.storage.from('UI').getPublicUrl(fallbackFilename).data.publicUrl;
-          }}
-        />
+      {/* HIGH-TECH INTERACTIVE BACKDROP HERO BANNER */}
+      <div
+        onClick={handleNextBanner}
+        className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-6 select-none transition-all"
+      >
+        {/* Animated Background Banner with Top-Focused Framing */}
+        {RESUME_BANNERS.map((banner, index) => (
+          <div
+            key={banner}
+            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
+              index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
+            }`}
+            style={{
+              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center top 15%',
+            }}
+          />
+        ))}
 
-        {/* Gradient Scrim */}
+        {/* High-Contrast Cyber Overlay Gradients */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#070b13]/80 via-transparent to-transparent pointer-events-none" />
 
-        {/* Typography */}
-        <div className="relative z-10 p-6 sm:p-10 space-y-2 max-w-2xl">
-          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-wider inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            CRYPTOGRAPHIC CREDENTIAL HUB
-          </span>
+        {/* Overlay Content */}
+        <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-between pointer-events-none min-h-[320px] md:min-h-[400px]">
+          
+          {/* Top Header Badge */}
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-400 uppercase tracking-widest backdrop-blur-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              CREDENTIAL VERIFICATION & PORTFOLIO
+            </span>
+          </div>
 
-          <h1 className="text-2xl sm:text-3xl font-extrabold font-mono text-white uppercase tracking-wide">
-            VERIFIED RESUME MATRIX
-          </h1>
+          {/* Main Title & Subtitle block */}
+          <div className="mt-auto pt-8">
+            <h2 className="text-2xl md:text-4xl font-extrabold text-white tracking-wide uppercase drop-shadow-lg font-sans">
+              Verified Resume Matrix
+            </h2>
+            <p className="text-xs md:text-sm text-slate-300 mt-1.5 max-w-xl drop-shadow-md font-mono">
+              Export authenticated competitive telemetry, verifiable soft skills, and institutional credentials directly to standard formats.
+            </p>
+          </div>
 
-          <p className="text-xs font-mono text-slate-300 leading-relaxed">
-            Export authenticated competitive telemetry, verifiable soft skills, and institutional credentials directly to standard formats.
-          </p>
-        </div>
-
-        {/* Indicator Dots */}
-        <div className="absolute bottom-4 right-6 z-20 flex items-center gap-1.5">
-          {RESUME_BANNER_IMAGES.map((_, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => setBannerIndex(idx)}
-              className={`h-1.5 rounded-full transition-all cursor-pointer ${bannerIndex === idx ? 'w-5 bg-cyan-400' : 'w-1.5 bg-slate-700 hover:bg-slate-500'
+          {/* Dynamic 2-Dot Pagination Indicators */}
+          <div className="flex items-center gap-1.5 pt-4">
+            {RESUME_BANNERS.map((_, idx) => (
+              <div
+                key={idx}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  idx === bannerIndex
+                    ? 'w-8 bg-cyan-400 shadow-sm shadow-cyan-400/50'
+                    : 'w-2 bg-slate-700/80'
                 }`}
-            />
-          ))}
+              />
+            ))}
+          </div>
         </div>
       </div>
 

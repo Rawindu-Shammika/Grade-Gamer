@@ -127,6 +127,26 @@ export const LandingPage = ({ uiImages, onAuthClick, onDashboardClick, onViewCha
               </p>
 
               <div className="flex flex-wrap items-center gap-4 pt-2">
+                {!user && (
+                  <>
+                    <button 
+                      type="button"
+                      onClick={() => onAuthClick && onAuthClick('signin')}
+                      className="px-6 py-2.5 text-xs font-mono font-black text-black bg-cyan-400 hover:bg-cyan-300 rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.35)] hover:shadow-[0_0_25px_rgba(6,182,212,0.6)] transition-all transform hover:-translate-y-0.5 cursor-pointer uppercase tracking-wider"
+                    >
+                      LOGIN
+                    </button>
+
+                    <button 
+                      type="button"
+                      onClick={() => handleGoTo('/register', 'register')}
+                      className={outlineBtnClass}
+                    >
+                      CREATE AN ACCOUNT
+                    </button>
+                  </>
+                )}
+
                 <button
                   type="button"
                   onClick={() => handleGoTo('/about', 'about')}
@@ -135,16 +155,6 @@ export const LandingPage = ({ uiImages, onAuthClick, onDashboardClick, onViewCha
                   <span>LEARN ABOUT GRADEGAMER</span>
                   <span className="text-cyan-400">ⓘ</span>
                 </button>
-
-                {!user && (
-                  <button 
-                    type="button"
-                    onClick={() => onAuthClick && onAuthClick('signin')}
-                    className={outlineBtnClass}
-                  >
-                    Create an Account
-                  </button>
-                )}
               </div>
 
               {/* Asymmetrical Stats Matrix */}

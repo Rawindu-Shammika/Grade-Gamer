@@ -16,6 +16,15 @@ export const MANUAL_GAMES = [
   'Rainbow Six Siege'
 ];
 
+// Supabase storage UI bucket reference
+const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
+
+// Only using the 2 requested images
+const GAMEDATA_BANNERS = [
+  'LOL i.jpg',
+  'PUBG ii.jpg',
+];
+
 export default function GameData() {
   const [user, setUser] = useState(null);
   const [registeredTitles, setRegisteredTitles] = useState([]);
@@ -23,6 +32,20 @@ export default function GameData() {
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
+
+  // Carousel state & rotation logic
+  const [bannerIndex, setBannerIndex] = useState(0);
+
+  const handleNextBanner = () => {
+    setBannerIndex((prev) => (prev + 1) % GAMEDATA_BANNERS.length);
+  };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setBannerIndex((prev) => (prev + 1) % GAMEDATA_BANNERS.length);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Tracker API state
   const [trackerGamerTag, setTrackerGamerTag] = useState('');
@@ -132,40 +155,61 @@ export default function GameData() {
 
   const isAutomated = AUTOMATED_GAMES.includes(selectedGame);
 
-  // 3. Compute LCC Mathematical Logic
-  const computeLCC = () => {
-    const totalMatches = matchHistory.length;
-    if (totalMatches < 5) {
+  // 1. FILTERED LOGS PER GAME WITH STRICT VALORANT COMPETITIVE FILTERING
+  const activeGameLogs = React.useMemo(() => {
+    const rawMatches = matchHistory.filter(
+      (log) => (log.game_title || log.game_name || log.game) === selectedGame
+    );
+
+    if (selectedGame === 'Valorant') {
+      return rawMatches.filter((match) => {
+        const mode = String(
+          match.metrics_payload?.mode ||
+          match.metrics_payload?.queue ||
+          match.metadata?.mode ||
+          match.metadata?.queue ||
+          match.mode ||
+          match.game_mode ||
+          ''
+        ).toLowerCase();
+
+        return (
+          (mode === 'competitive' || mode === 'comp') &&
+          !mode.includes('deathmatch') &&
+          !mode.includes('escalation') &&
+          !mode.includes('spikerush')
+        );
+      });
+    }
+
+    return rawMatches;
+  }, [matchHistory, selectedGame]);
+
+  // 2. ISOLATED LCC CALCULATION PER GAME
+  const lccStats = React.useMemo(() => {
+    if (activeGameLogs.length < 2) {
       return {
-        lcc: 0,
-        pBaseline: 0,
-        pCurrent: 0,
-        n: totalMatches,
-        isCalibrated: false,
-        matchesRemaining: 5 - totalMatches
+        baseline: 'Pending',
+        current: `${activeGameLogs.length}/5 Sampled`,
+        delta: activeGameLogs.length,
+        slope: '0.0',
+        isCalibrated: false
       };
     }
 
-    const baselineSet = matchHistory.slice(0, 5);
-    const pBaseline = baselineSet.reduce((acc, m) => acc + Number(m.performance_score), 0) / 5;
-
-    const currentSet = matchHistory.slice(-5);
-    const pCurrent = currentSet.reduce((acc, m) => acc + Number(m.performance_score), 0) / 5;
-
-    const n = Math.max(1, totalMatches - 5);
-    const lcc = (pCurrent - pBaseline) / n;
+    const scores = activeGameLogs.map((l) => Number(l.calculated_rating || l.score || l.performance_score || 50));
+    const baseline = (scores.slice(0, 5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
+    const current = (scores.slice(-5).reduce((a, b) => a + b, 0) / Math.min(scores.length, 5)).toFixed(1);
+    const slope = ((Number(current) - Number(baseline)) / Math.max(1, activeGameLogs.length)).toFixed(2);
 
     return {
-      lcc: Number(lcc.toFixed(3)),
-      pBaseline: Number(pBaseline.toFixed(1)),
-      pCurrent: Number(pCurrent.toFixed(1)),
-      n,
-      isCalibrated: true,
-      matchesRemaining: 0
+      baseline: `${baseline} Pts`,
+      current: `${current} Pts`,
+      delta: activeGameLogs.length,
+      slope,
+      isCalibrated: true
     };
-  };
-
-  const lccData = computeLCC();
+  }, [activeGameLogs]);
 
   // 4. Ingestion Handler
   const handleIngestMatch = async (type) => {
@@ -291,55 +335,93 @@ export default function GameData() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#070b13] text-slate-900 dark:text-slate-100 p-4 md:p-8 space-y-8 max-w-7xl mx-auto transition-colors pt-28">
-      
-      {/* HEADER BANNER */}
-      <div className="relative w-full h-52 sm:h-60 rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl flex items-center p-6 sm:p-10">
-        <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/80 to-transparent pointer-events-none" />
-        <div className="relative z-10 space-y-2 max-w-2xl">
-          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 uppercase tracking-wider inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            TELEMETRY INGESTION & LCC LAB
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-extrabold font-mono text-white uppercase tracking-wide">
-            GAME DATA CALIBRATION ENGINE
-          </h1>
-          <p className="text-xs font-mono text-slate-300 leading-relaxed">
-            Ingest raw match telemetry, calibrate game-specific metrics, and verify mathematical Learning Curve Calculator (LCC) outputs before dashboard serialization.
-          </p>
+    <div className="bg-slate-50 dark:bg-[#070b13] min-h-screen text-slate-900 dark:text-slate-100 font-sans space-y-6 pt-28 pb-16 w-full max-w-[1600px] mx-auto px-6 md:px-12 lg:px-16 selection:bg-cyan-500/30">
+
+      {/* HIGH-TECH INTERACTIVE BACKDROP HERO BANNER */}
+      <div
+        onClick={handleNextBanner}
+        className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
+      >
+        {/* Animated Background Carousel */}
+        {GAMEDATA_BANNERS.map((banner, index) => (
+          <div
+            key={banner}
+            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
+              }`}
+            style={{
+              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center top 15%',
+            }}
+          />
+        ))}
+
+        {/* High-Contrast Cyber Overlay Gradients */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />
+
+        {/* Overlay Content */}
+        <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-between pointer-events-none min-h-[320px] md:min-h-[400px]">
+
+          {/* Top Header Badge */}
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-400 uppercase tracking-widest backdrop-blur-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              TELEMETRY INGESTION & LCC LAB
+            </span>
+          </div>
+
+          {/* Main Title & Subtitle */}
+          <div className="mt-auto pt-8">
+            <h2 className="text-2xl md:text-4xl font-extrabold text-white tracking-wide uppercase drop-shadow-lg font-sans">
+              Game Data Calibration Engine
+            </h2>
+            <p className="text-xs md:text-sm text-slate-300 mt-1.5 max-w-xl drop-shadow-md font-mono">
+              Ingest raw match telemetry, calibrate game-specific metrics, and verify mathematical Learning Curve Calculator (LCC) outputs before dashboard serialization.
+            </p>
+          </div>
+
+          {/* Dynamic 2-Dot Pagination Indicators */}
+          <div className="flex items-center gap-1.5 pt-4">
+            {GAMEDATA_BANNERS.map((_, idx) => (
+              <div
+                key={idx}
+                className={`h-1.5 rounded-full transition-all duration-300 ${idx === bannerIndex
+                  ? 'w-8 bg-cyan-400 shadow-sm shadow-cyan-400/50'
+                  : 'w-2 bg-slate-700/80'
+                  }`}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* REGISTERED TITLES SELECTOR */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-2xl bg-white dark:bg-[#0b111e] border border-slate-200 dark:border-slate-800 shadow-md dark:shadow-2xl">
-        <div>
-          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
-            ATHLETE REGISTERED DISCIPLINES
-          </span>
-          <p className="text-xs font-mono text-slate-500 dark:text-slate-400">
-            Select an active title to calibrate telemetry and evaluate mathematical curve outputs.
-          </p>
+      {/* STANDARDIZED ESPORTS TITLE SELECTOR DROPDOWN */}
+      <div className="w-full flex items-center justify-between bg-[#0b131d] border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl mb-6">
+        <div className="text-[11px] font-black uppercase tracking-widest text-cyan-400 font-mono">
+          SELECT ACTIVE ESPORTS TITLE
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {registeredTitles.map((game) => {
-            const isSelected = selectedGame === game;
-            return (
-              <button
-                key={game}
-                type="button"
-                onClick={() => setSelectedGame(game)}
-                className={`px-4 py-2 rounded-xl text-xs font-mono font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${
-                  isSelected
-                    ? 'bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.35)]'
-                    : 'bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-cyan-400'
-                }`}
-              >
-                <span>{game}</span>
-                <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-slate-950' : 'bg-slate-500'}`} />
-              </button>
-            );
-          })}
+        <div className="relative min-w-[220px] sm:w-72">
+          <select
+            value={selectedGame}
+            onChange={(e) => setSelectedGame(e.target.value)}
+            className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
+          >
+            <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">VALORANT</option>
+            <option value="Assetto Corsa" className="bg-[#0b131d] text-white font-mono py-2">ASSETTO CORSA</option>
+            <option value="F1 25" className="bg-[#0b131d] text-white font-mono py-2">F1 25</option>
+            <option value="Counter-Strike 2" className="bg-[#0b131d] text-white font-mono py-2">COUNTER-STRIKE 2</option>
+            <option value="League of Legends" className="bg-[#0b131d] text-white font-mono py-2">LEAGUE OF LEGENDS</option>
+            <option value="Dota 2" className="bg-[#0b131d] text-white font-mono py-2">DOTA 2</option>
+            <option value="Apex Legends" className="bg-[#0b131d] text-white font-mono py-2">APEX LEGENDS</option>
+          </select>
+
+          {/* Dropdown Chevron */}
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
         </div>
       </div>
 
@@ -363,31 +445,31 @@ export default function GameData() {
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">P_baseline (Initial 5 Matches)</span>
             <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccData.isCalibrated ? `${lccData.pBaseline} Pts` : `${matchHistory.length}/5 Sampled`}
+              {lccStats.isCalibrated ? lccStats.baseline : `${activeGameLogs.length}/5 Sampled`}
             </p>
           </div>
 
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">P_current (Recent 5 Matches)</span>
             <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccData.isCalibrated ? `${lccData.pCurrent} Pts` : 'Pending Samples'}
+              {lccStats.isCalibrated ? lccStats.current : 'Pending Samples'}
             </p>
           </div>
 
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">N (Growth Delta Period)</span>
             <p className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white mt-1">
-              {lccData.isCalibrated ? `${lccData.n} Matches` : `${matchHistory.length} Matches`}
+              {lccStats.isCalibrated ? `${lccStats.delta} Matches` : `${activeGameLogs.length} Matches`}
             </p>
           </div>
 
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Linear Growth Slope</span>
             <div className="flex items-center gap-2 mt-1">
-              <p className={`text-2xl font-extrabold font-mono ${lccData.lcc >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {lccData.lcc >= 0 ? `+${lccData.lcc}` : lccData.lcc}
+              <p className={`text-2xl font-extrabold font-mono ${Number(lccStats.slope) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {Number(lccStats.slope) >= 0 ? `+${lccStats.slope}` : lccStats.slope}
               </p>
-              {lccData.lcc > 0 && matchHistory.length >= 10 && (
+              {Number(lccStats.slope) > 0 && activeGameLogs.length >= 10 && (
                 <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 uppercase">
                   ADAPTABILITY UNLOCKED
                 </span>
@@ -564,6 +646,50 @@ export default function GameData() {
                       </div>
                     )}
                   </>
+                ) : selectedGame === 'Counter-Strike 2' ? (
+                  <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                      <div>
+                        <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                          Steam Web API Integration
+                        </div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                          Link Steam Identity
+                        </h3>
+                      </div>
+                      <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
+                        UNDER CONSTRUCTION
+                      </span>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
+                      <p className="text-xs font-mono text-slate-400">
+                        Direct API integration for {selectedGame} (Steam ID / Vanity URL live sync) is currently under construction.
+                        Aggregate Steam stats (K/D, HS%, ADR, Win Rate, Premier Tier) and Match Packet Streams will be available soon.
+                      </p>
+                    </div>
+                  </div>
+                ) : (selectedGame === 'Dota 2' || selectedGame === 'League of Legends') ? (
+                  <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                      <div>
+                        <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                          OpenDota / Riot API Integration
+                        </div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                          Match ID Injection Node
+                        </h3>
+                      </div>
+                      <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
+                        UNDER CONSTRUCTION
+                      </span>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
+                      <p className="text-xs font-mono text-slate-400">
+                        Direct API integration for {selectedGame} is currently under construction.
+                        GPM/XPM timeline curves, Vision Score, Ward efficiency, and Objective damage contribution analysis will be available soon.
+                      </p>
+                    </div>
+                  </div>
                 ) : (
                   <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
                     <p className="text-xs font-mono text-slate-400">Direct API integration for {selectedGame} is currently under construction. Please use another title.</p>
@@ -666,174 +792,180 @@ export default function GameData() {
         )}
       </div>
 
-      {/* RAW TELEMETRY STREAM LOG */}
-      <div className="w-full max-w-4xl mx-auto p-6 md:p-8 rounded-3xl bg-white dark:bg-[#0b111e] border border-slate-200 dark:border-slate-800 shadow-md dark:shadow-2xl space-y-6">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-          <div>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-bold">
-              DATA PIPELINE
-            </span>
-            <h2 className="text-xl font-bold font-mono text-slate-900 dark:text-white uppercase">
-              RAW TELEMETRY STREAM LOG
-            </h2>
+      {/* DATA PIPELINE SECTION */}
+      <div className="bg-[#0b131d] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <div className="text-[10px] font-black uppercase tracking-widest text-cyan-400">DATA PIPELINE</div>
+            <h3 className="text-lg font-black text-white uppercase tracking-tight">
+              {selectedGame} Telemetry Stream Log
+            </h3>
           </div>
-          <span className="px-3 py-1 rounded-full text-[10px] font-mono font-bold bg-indigo-950/70 border border-indigo-500/40 text-indigo-300 uppercase">
-            {matchHistory.length} PACKETS INGESTED
+          <span className="text-xs font-mono bg-[#070b10] border border-slate-800 text-cyan-400 px-3 py-1 rounded-lg">
+            {activeGameLogs.length} Packets Ingested
           </span>
         </div>
 
-        {isLoadingFeed ? (
-          <div className="text-center p-8 text-slate-500 font-mono text-xs animate-pulse">
-            SYNCING TELEMETRY PIPELINE...
-          </div>
-        ) : matchHistory.length === 0 ? (
-          <div className="text-center p-8 text-slate-500 font-mono text-xs uppercase tracking-widest">
-            NO TELEMETRY DATA FOUND FOR {selectedGame}.
+        {activeGameLogs.length === 0 ? (
+          <div className="text-center py-12 border border-dashed border-slate-800/80 rounded-xl bg-[#070d14]/50 space-y-2">
+            <div className="text-2xl">📡</div>
+            <div className="text-sm font-bold text-slate-300">No {selectedGame} Telemetry Ingested</div>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              Use the {selectedGame} ingestion node above to capture your first telemetry data packet.
+            </p>
           </div>
         ) : (
-          <div className="space-y-3 mt-6 custom-scrollbar max-h-[800px] overflow-y-auto pr-2">
-            {/* TOP AGGREGATE SUMMARY BAR */}
-            <div className="bg-[#0f1923]/90 border border-slate-800 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between text-xs text-slate-400">
-              <div className="flex items-center space-x-3">
-                <span className="text-white font-bold text-sm">Recent Matches</span>
-                <span className="bg-slate-800 border border-slate-700 px-2 py-0.5 rounded text-slate-300 font-semibold text-[11px]">
-                  {matchHistory.length}
-                </span>
-                <div className="flex items-center space-x-1 font-bold">
-                  <span className="text-emerald-400">
-                    {matchHistory.filter(l => l.metrics_payload?.outcome === 'VICTORY').length} W
-                  </span>
-                  <span className="text-slate-600">//</span>
-                  <span className="text-rose-400">
-                    {matchHistory.filter(l => l.metrics_payload?.outcome !== 'VICTORY').length} L
-                  </span>
-                </div>
-              </div>
+          <div className="space-y-3">
+            {activeGameLogs.map((log, idx) => {
+              if (selectedGame === 'Valorant') {
+                const roundsWon = log.metrics_payload?.rounds_won ?? log.rounds_won;
+                const roundsLost = log.metrics_payload?.rounds_lost ?? log.rounds_lost;
+                const formattedScore = (roundsWon !== undefined && roundsLost !== undefined) 
+                  ? `${roundsWon} - ${roundsLost}` 
+                  : (log.metrics_payload?.score_rounds || log.score || '13 - 10');
+                const mapName = log.metrics_payload?.map || log.map || 'LOTUS';
+                const agentName = log.metrics_payload?.agent || log.agent || 'OMEN';
+                const kdVal = log.metrics_payload?.kd || log.metrics_payload?.kd_ratio || log.kd || log.kd_ratio || 1.0;
+                const killsVal = log.metrics_payload?.kills || log.kills || 0;
+                const deathsVal = log.metrics_payload?.deaths || log.deaths || 0;
+                const assistsVal = log.metrics_payload?.assists || log.assists || 0;
+                const acsVal = log.metrics_payload?.acs || log.acs || 210;
+                const hsVal = log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent;
+                const ratingVal = log.performance_score || log.calculated_rating || log.rating || 65.0;
+                const dateVal = new Date(log.created_at || log.match_date || Date.now()).toLocaleDateString();
+                const idVal = String(log.id || log.match_id || '');
 
-              <div className="flex items-center space-x-6">
-                <div className="text-right">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Avg K/D</div>
-                  <div className="text-white font-bold text-sm">
-                    {(matchHistory.reduce((acc, curr) => acc + Number(curr.metrics_payload?.kd || 1), 0) / matchHistory.length).toFixed(2)}
+                return (
+                  <div 
+                    key={log.id || idx}
+                    className="relative flex items-center justify-between p-3.5 sm:p-4 rounded-xl bg-[#070e17] border border-slate-800/80 hover:border-cyan-500/40 hover:bg-[#0a1320] transition-all shadow-sm"
+                  >
+                    {/* LEFT SECTION: Score, Map, Agent, Meta */}
+                    <div className="flex items-center gap-4 sm:gap-6 min-w-0">
+                      {/* Primary Score Display */}
+                      <div className="w-16 sm:w-20 shrink-0 text-left">
+                        <div className="text-sm sm:text-base font-mono font-black text-white tracking-wide">
+                          {formattedScore}
+                        </div>
+                        <div className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">
+                          SCORE
+                        </div>
+                      </div>
+
+                      {/* Map Name & Agent Badge */}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm sm:text-base font-black text-white tracking-wide uppercase">
+                            {mapName}
+                          </span>
+                          <span className="px-2 py-0.5 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 rounded-md uppercase">
+                            {agentName}
+                          </span>
+                        </div>
+                        
+                        {/* Meta Tags */}
+                        <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 mt-0.5">
+                          <span className="text-cyan-500 font-semibold uppercase">Competitive</span>
+                          <span>•</span>
+                          <span>{dateVal}</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="hidden sm:inline">ID: {idVal.slice(0, 8)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT SECTION: Stats Columns */}
+                    <div className="flex items-center gap-4 sm:gap-7 shrink-0 font-mono">
+                      {/* K/D Ratio */}
+                      <div className="text-center">
+                        <div className={`text-xs sm:text-sm font-black ${Number(kdVal) >= 1 ? 'text-emerald-400' : 'text-slate-300'}`}>
+                          {Number(kdVal).toFixed(2)}
+                        </div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">K/D</div>
+                      </div>
+
+                      {/* KDA */}
+                      <div className="text-center hidden sm:block">
+                        <div className="text-xs sm:text-sm font-bold text-slate-200">
+                          <span className="text-cyan-400">{killsVal}</span> / <span className="text-rose-400">{deathsVal}</span> / <span className="text-slate-400">{assistsVal}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">KDA</div>
+                      </div>
+
+                      {/* ACS */}
+                      <div className="text-center">
+                        <div className="text-xs sm:text-sm font-black text-white">
+                          {acsVal}
+                        </div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">ACS</div>
+                      </div>
+
+                      {/* HS% */}
+                      {hsVal !== undefined && (
+                        <div className="text-center hidden md:block">
+                          <div className="text-xs sm:text-sm font-bold text-emerald-400">
+                            {hsVal}%
+                          </div>
+                          <div className="text-[9px] text-slate-500 tracking-wider">HS%</div>
+                        </div>
+                      )}
+
+                      {/* Rating */}
+                      <div className="text-center">
+                        <div className="text-xs sm:text-sm font-black text-cyan-400">
+                          {Number(ratingVal).toFixed(1)}
+                        </div>
+                        <div className="text-[9px] text-cyan-600/80 tracking-wider font-bold">RATING</div>
+                      </div>
+
+                      {/* Delete Action Button */}
+                      <button
+                        onClick={() => handleDeleteTelemetry(log.id)}
+                        className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition border-none bg-transparent cursor-pointer"
+                        title="Delete Match Packet"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Avg ACS</div>
-                  <div className="text-cyan-400 font-bold text-sm">
-                    {Math.round(matchHistory.reduce((acc, curr) => acc + Number(curr.metrics_payload?.acs || 200), 0) / matchHistory.length)}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Avg Score (P)</div>
-                  <div className="text-emerald-400 font-bold text-sm">
-                    {(matchHistory.reduce((acc, curr) => acc + Number(curr.performance_score || 50), 0) / matchHistory.length).toFixed(1)}
-                  </div>
-                </div>
-              </div>
-            </div>
+                );
+              }
 
-            {/* MATCH CARD LIST */}
-            {matchHistory.map((log) => {
-              const payload = log.metrics_payload || {};
-              const isWin = payload.outcome === 'VICTORY';
-              const kdRatio = Number(payload.kd || 1.0);
-              const kills = payload.kills ?? Math.round(kdRatio * 14);
-              const deaths = payload.deaths ?? 14;
-              const assists = payload.assists ?? 4;
-              const rounds = (payload.score_rounds || '13 : 8').split(':');
-              const playerRounds = rounds[0]?.trim() || (isWin ? '13' : '9');
-              const enemyRounds = rounds[1]?.trim() || (isWin ? '9' : '13');
-
-              // Agent icon fallback resolver
-              const agentName = payload.agent || 'Reyna';
-              const agentSlug = agentName.toLowerCase();
-
+              // Fallback default style for other games
               return (
-                <div
-                  key={log.id}
-                  className="relative bg-[#0d1620] hover:bg-[#121c27] transition border border-slate-800/80 rounded-lg flex flex-col md:flex-row md:items-center justify-between p-3.5 overflow-hidden shadow-lg gap-4"
-                >
-                  {/* Left Status Color Bar */}
-                  <div
-                    className={`absolute left-0 top-0 bottom-0 w-1.5 ${
-                      isWin ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'
-                    }`}
-                  />
-
-                  {/* Left: Match Info & Text Agent Name */}
-                  <div className="flex flex-col justify-center pl-3 flex-1">
-                    <div className="flex items-center space-x-2 text-[11px] text-slate-400 mb-0.5">
-                      <span>{new Date(log.created_at || log.match_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
-                      <span className="text-slate-600">//</span>
-                      <span className="text-slate-300 font-medium">{payload.mode || 'Competitive'}</span>
-                      <span className="text-slate-600">//</span>
-                      <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
-                        {payload.agent || 'Reyna'}
-                      </span>
+                <div key={log.id || idx} className="bg-[#070d14] border border-slate-800/80 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>{log.metrics_payload?.track || log.metrics_payload?.map || log.map || `${selectedGame} Match #${idx + 1}`}</span>
                     </div>
-                    
-                    <div className="flex items-center space-x-2">
-                      <span className="text-white font-black text-base tracking-wide">
-                        {payload.map || 'Breeze'}
-                      </span>
-                      <span className="bg-slate-800/90 border border-slate-700 text-[10px] text-slate-300 px-1.5 py-0.5 rounded font-medium">
-                        {payload.rank || 'Platinum 2'}
-                      </span>
+                    <div className="text-[10px] font-mono text-slate-400 flex items-center gap-2 mt-0.5">
+                      <span>{new Date(log.created_at || log.match_date || Date.now()).toLocaleDateString()}</span>
+                      <span className="text-slate-600">//</span>
+                      <span>ID: {log.id ? String(log.id).slice(0, 8) : `LOG-${idx + 1}`}</span>
                     </div>
                   </div>
 
-                  {/* Center: Score & Performance Score P */}
-                  <div className="flex items-center space-x-8 md:flex-none">
-                    <div className="text-center">
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold tracking-wider mb-0.5">Score</div>
-                      <div className="font-black text-base flex items-center space-x-1 justify-center leading-none">
-                        <span className={isWin ? 'text-emerald-400' : 'text-slate-300'}>{playerRounds}</span>
-                        <span className="text-slate-600">:</span>
-                        <span className={!isWin ? 'text-rose-400' : 'text-slate-300'}>{enemyRounds}</span>
-                      </div>
-                    </div>
+                  {/* Dynamic Metric Badges */}
+                  <div className="flex items-center gap-4 text-xs font-mono">
+                    {log.metrics_payload?.lap_time && (
+                      <div><span className="text-slate-500">LAP:</span> <span className="text-cyan-400 font-bold">{log.metrics_payload.lap_time}</span></div>
+                    )}
+                    {(log.metrics_payload?.kd_ratio || log.metrics_payload?.kd) && (
+                      <div><span className="text-slate-500">K/D:</span> <span className="text-cyan-400 font-bold">{log.metrics_payload.kd_ratio || log.metrics_payload.kd}</span></div>
+                    )}
+                    {(log.metrics_payload?.hs_percentage || log.hs_percentage) && (
+                      <div><span className="text-slate-500">HS%:</span> <span className="text-emerald-400 font-bold">{log.metrics_payload?.hs_percentage || log.hs_percentage}%</span></div>
+                    )}
+                    {log.metrics_payload?.acs && (
+                      <div><span className="text-slate-500">ACS:</span> <span className="text-white font-bold">{log.metrics_payload.acs}</span></div>
+                    )}
+                    <div><span className="text-slate-500">RATING:</span> <span className="text-white font-bold">{log.performance_score?.toFixed(1) || log.calculated_rating || 'N/A'}</span></div>
 
-                    <div className="text-center">
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold tracking-wider mb-0.5">Perf. Score</div>
-                      <div className="text-emerald-400 font-black text-base leading-none">
-                        {log.performance_score?.toFixed(1)}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right: Metrics (K/D, KDA, HS%, ACS) */}
-                  <div className="flex items-center space-x-6 text-right pr-2 md:flex-none">
-                    <div>
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold mb-0.5">K/D</div>
-                      <div className={`font-black text-sm leading-none ${kdRatio >= 1.0 ? 'text-cyan-400' : 'text-rose-400'}`}>
-                        {kdRatio.toFixed(2)}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold mb-0.5">K/D/A</div>
-                      <div className="text-slate-200 font-bold text-xs leading-none">
-                        {kills} <span className="text-slate-500">/</span> {deaths} <span className="text-slate-500">/</span> {assists}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold mb-0.5">HS%</div>
-                      <div className="text-slate-200 font-bold text-xs leading-none">
-                        {payload.hs_percent ?? 21}%
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] uppercase text-slate-500 font-semibold mb-0.5">ACS</div>
-                      <div className="text-white font-bold text-sm leading-none">
-                        {payload.acs ?? 200}
-                      </div>
-                    </div>
-                    
                     <button
                       onClick={() => handleDeleteTelemetry(log.id)}
-                      className="ml-2 p-1.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition border border-rose-500/20"
+                      className="ml-2 p-1.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition border border-rose-500/20 cursor-pointer border-none bg-transparent"
                       title="Delete Record"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -864,7 +996,7 @@ export default function GameData() {
                     ✕
                   </button>
                 </div>
-                
+
                 <div className="text-white font-bold text-sm mt-0.5">
                   Map: <span className="text-cyan-200">{syncToast.map}</span>
                 </div>
