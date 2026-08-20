@@ -447,16 +447,44 @@ export default function GameData() {
           </div>
 
           {/* 4. LINEAR GROWTH SLOPE */}
-          <div className="p-4 rounded-xl bg-[#050b13] border border-slate-800/60">
-            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
-              LINEAR GROWTH SLOPE
-            </div>
-            <div className={`text-xl font-mono font-black ${
-              lccResults.slopeNumeric >= 0 ? 'text-emerald-400' : 'text-rose-400'
-            }`}>
-              {lccResults.slope}
-            </div>
-          </div>
+          {(() => {
+            const totalMatches = cycleMatches.length;
+            const slopeValue = lccResults.slopeNumeric;
+            const isCalibrated = totalMatches > 0 && !isNaN(slopeValue);
+            const isPositive = slopeValue > 0;
+
+            return (
+              <div
+                className={`p-4 rounded-xl border transition-all duration-200 ${
+                  isCalibrated
+                    ? 'bg-[#050b13] border-slate-800/60'
+                    : 'bg-[#040810]/50 border-slate-800/40 opacity-60'
+                }`}
+              >
+                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                  LINEAR GROWTH SLOPE
+                </div>
+                <div className="flex items-baseline gap-1 font-mono">
+                  <span
+                    className={`text-xl font-black ${
+                      isCalibrated
+                        ? isPositive
+                          ? 'text-emerald-400'
+                          : 'text-rose-400'
+                        : 'text-slate-600'
+                    }`}
+                  >
+                    {isCalibrated ? lccResults.slope : '0.00'}
+                  </span>
+                  {!isCalibrated && (
+                    <span className="text-[9px] uppercase tracking-wider text-slate-600 font-bold ml-1">
+                      (Uncalibrated)
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 

@@ -2,26 +2,43 @@ import React, { useState, useEffect } from 'react';
 import { ShieldCheck, Award, Mail, Phone, MapPin, Globe, Terminal, Cpu, BookOpen } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import { supabase } from '../../services/supabaseClient';
+import { SoftSkillCalibrationCard } from './SoftSkillCalibrationCard';
+import { ResumeTelemetrySection } from './ResumeTelemetrySection';
+import { calculateLCCMetrics } from '../../utils/lccCalculator';
+import { fetchCurrentValorantAct } from '../../utils/valorantActService';
+import { applyGlobalActReset } from '../../utils/actDataSync';
 
 export const VerifiedResumeCard = ({ 
   resumeData, 
   tournaments = [], 
   education = [], 
   techStack = [], 
-  softSkills = [] 
+  softSkills = [],
+  gameStats: passedGameStats,
+  evaluations: passedEvaluations
 }) => {
   const { user, profile } = useAuth();
   const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
 
-  const [peerMetrics, setPeerMetrics] = useState({
-    overallAvg: 5.0,
-    commAvg: 5.0,
-    teamAvg: 5.0,
-    mechAvg: 5.0,
-    totalReviews: 0,
+  const [evaluations, setEvaluations] = useState([]);
+  const [actInfo, setActInfo] = useState(null);
+  const [gameStats, setGameStats] = useState({
+    valorant: { hours: 0, slope: 0, matches: 0 },
+    cs2: { hours: 0, slope: 0, matches: 0 },
+    assettoCorsa: { hours: 0, slope: 0, matches: 0 },
+    f1_25: { hours: 0, slope: 0, matches: 0 },
   });
 
   useEffect(() => {
+    fetchCurrentValorantAct().then((data) => setActInfo(data));
+  }, []);
+
+  useEffect(() => {
+    if (passedEvaluations) {
+      setEvaluations(passedEvaluations);
+      return;
+    }
+
     const fetchPeerMetrics = async () => {
       try {
         const targetUserId = profile?.id || user?.id;
@@ -29,25 +46,13 @@ export const VerifiedResumeCard = ({
 
         const { data: reviews, error } = await supabase
           .from('peer_reviews')
-          .select('communication_rating, teamplay_rating, mechanical_rating, overall_rating')
+          .select('communication_rating, teamplay_rating, mechanical_rating, leadership_rating, overall_rating')
           .eq('target_user_id', targetUserId)
           .order('created_at', { ascending: false })
           .limit(15);
 
-        if (!error && reviews && reviews.length > 0) {
-          const count = reviews.length;
-          const avgOverall = reviews.reduce((acc, r) => acc + (Number(r.overall_rating) || 5), 0) / count;
-          const avgComm = reviews.reduce((acc, r) => acc + (Number(r.communication_rating) || 5), 0) / count;
-          const avgTeam = reviews.reduce((acc, r) => acc + (Number(r.teamplay_rating) || 5), 0) / count;
-          const avgMech = reviews.reduce((acc, r) => acc + (Number(r.mechanical_rating) || 5), 0) / count;
-
-          setPeerMetrics({
-            overallAvg: parseFloat(avgOverall.toFixed(1)),
-            commAvg: parseFloat(avgComm.toFixed(1)),
-            teamAvg: parseFloat(avgTeam.toFixed(1)),
-            mechAvg: parseFloat(avgMech.toFixed(1)),
-            totalReviews: count,
-          });
+        if (!error && reviews) {
+          setEvaluations(reviews);
         }
       } catch (err) {
         console.error('Error fetching resume peer ratings:', err);
@@ -55,7 +60,118 @@ export const VerifiedResumeCard = ({
     };
 
     fetchPeerMetrics();
-  }, [profile?.id, user?.id]);
+  }, [profile?.id, user?.id, passedEvaluations]);
+
+  useEffect(() => {
+    if (passedGameStats) {
+      setGameStats(passedGameStats);
+      return;
+    }
+
+    const fetchTelemetryStats = async () => {
+      try {
+        const targetUserId = profile?.id || user?.id;
+        if (!targetUserId) return;
+
+        // Fetch Valorant matches
+        const { data: valMatches } = await supabase
+          .from('valorant_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
+        // Fetch other games matches
+        const { data: otherMatches } = await supabase
+          .from('game_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('match_date', { ascending: true });
+
+        const stats = {
+          valorant: { hours: 0, slope: 0, matches: 0 },
+          cs2: { hours: 0, slope: 0, matches: 0 },
+          assettoCorsa: { hours: 0, slope: 0, matches: 0 },
+          f1_25: { hours: 0, slope: 0, matches: 0 },
+        };
+
+        const processGameMatches = (matchesList, gameKey) => {
+          if (!matchesList || matchesList.length === 0) return;
+
+          let filteredList = matchesList;
+          if (gameKey === 'valorant') {
+            // Apply strict competitive filter for Valorant
+            filteredList = matchesList.filter((match) => {
+              const mode = String(
+                match.metrics_payload?.mode ||
+                match.metrics_payload?.queue ||
+                match.metadata?.mode ||
+                match.metadata?.queue ||
+                match.mode ||
+                match.game_mode ||
+                ''
+              ).toLowerCase();
+
+              return (
+                (mode === 'competitive' || mode === 'comp') &&
+                !mode.includes('deathmatch') &&
+                !mode.includes('escalation') &&
+                !mode.includes('spikerush')
+              );
+            });
+
+            // Apply global act reset filter
+            filteredList = applyGlobalActReset(filteredList, 'Valorant', actInfo);
+          }
+
+          const count = filteredList.length;
+          if (count === 0) return;
+
+          // Calculate hours competed
+          const totalSeconds = filteredList.reduce((acc, m) => {
+            const payload = m.metrics_payload || m;
+            const duration =
+              payload.game_length_in_seconds ||
+              payload.duration_seconds ||
+              (payload.duration_ms ? payload.duration_ms / 1000 : 0) ||
+              ((Number(payload.rounds_won || 0) + Number(payload.rounds_lost || 0)) * 105) ||
+              2100;
+            return acc + duration;
+          }, 0);
+          const hours = totalSeconds / 3600;
+
+          // Calculate Linear Growth Slope (using the unified LCC metrics)
+          const lcc = calculateLCCMetrics(filteredList);
+
+          stats[gameKey] = {
+            hours: parseFloat(hours.toFixed(1)),
+            slope: lcc.slopeNumeric,
+            matches: count,
+          };
+        };
+
+        processGameMatches(valMatches, 'valorant');
+
+        const matchesByGame = {};
+        if (otherMatches) {
+          otherMatches.forEach((m) => {
+            const title = m.game_title || '';
+            if (!matchesByGame[title]) matchesByGame[title] = [];
+            matchesByGame[title].push(m);
+          });
+        }
+
+        processGameMatches(matchesByGame['Counter-Strike 2'], 'cs2');
+        processGameMatches(matchesByGame['Assetto Corsa'], 'assettoCorsa');
+        processGameMatches(matchesByGame['F1 25'], 'f1_25');
+
+        setGameStats(stats);
+      } catch (err) {
+        console.error('Error fetching telemetry stats:', err);
+      }
+    };
+
+    fetchTelemetryStats();
+  }, [profile?.id, user?.id, actInfo, passedGameStats]);
 
   if (!resumeData) return null;
 
@@ -191,122 +307,10 @@ export const VerifiedResumeCard = ({
         </div>
 
         {/* Section B: Performance Metrics Grid */}
-        <div className="space-y-3 print-avoid-break">
-          <h2 className="text-xs font-black uppercase tracking-widest text-cyan-600 dark:text-[#00b4d8] font-mono print-text-dark">
-            Esports Competitive Telemetry & Performance Metrics
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {registeredTitles.map((title) => (
-              <div key={title} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800/80 print-bg-white print-border-slate">
-                <span className="text-[9px] font-mono font-bold text-slate-600 dark:text-slate-500 uppercase tracking-wider block">
-                  {title}
-                </span>
-                <span className="text-lg font-black text-slate-900 dark:text-white font-mono mt-1 block print-text-dark">
-                  160+ Hours
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 block print-text-slate">
-                  Top 5% Telemetry Analytics
-                </span>
-              </div>
-            ))}
-
-            {/* Metric: LCC Slope Coefficient */}
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800/80 print-bg-white print-border-slate">
-              <span className="text-[9px] font-mono font-bold text-slate-600 dark:text-slate-500 uppercase tracking-wider block">
-                LCC Slope Coefficient
-              </span>
-              <span className="text-lg font-black text-emerald-500 dark:text-emerald-400 font-mono mt-1 block print-text-dark">
-                +{resumeData.lccSlopeIndex}% Growth
-              </span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 block print-text-slate">
-                Calibrated via 10 matches
-              </span>
-            </div>
-          </div>
-        </div>
+        <ResumeTelemetrySection gameStats={gameStats} userProfile={profile} />
 
         {/* LATEST PEER EVALUATION & SOFT-SKILL CALIBRATION */}
-        <div className="space-y-3 print-avoid-break">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-mono uppercase tracking-widest text-cyan-600 dark:text-cyan-400 font-bold flex items-center gap-2 print-text-dark">
-              <span className="w-2 h-2 rounded-full bg-cyan-500 dark:bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
-              LATEST PEER EVALUATION & SOFT-SKILL CALIBRATION
-            </span>
-            <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 print-text-slate">
-              VERIFIED VIA {peerMetrics.totalReviews} SQUAD EVALUATIONS
-            </span>
-          </div>
-
-          <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/90 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-4 gap-6 items-center shadow-md dark:shadow-lg print-bg-white print-border-slate">
-            {/* Overall Composite Score */}
-            <div className="md:border-r md:border-slate-200 dark:md:border-slate-800/80 md:pr-6 flex flex-col justify-center print-border-slate">
-              <div className="flex items-baseline gap-1">
-                <span className="text-4xl font-extrabold font-mono text-cyan-600 dark:text-cyan-400 print-text-dark">
-                  {peerMetrics.overallAvg.toFixed(1)}
-                </span>
-                <span className="text-sm font-mono text-slate-500 print-text-slate">/ 5.0</span>
-              </div>
-              <div className="flex items-center gap-1 mt-1 text-cyan-500 dark:text-cyan-400 text-sm">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <span
-                    key={star}
-                    className={star <= Math.round(peerMetrics.overallAvg) ? 'text-cyan-500 dark:text-cyan-400 print-text-dark' : 'text-slate-300 dark:text-slate-700 print-text-slate'}
-                  >
-                    ★
-                  </span>
-                ))}
-              </div>
-              <p className="text-[10px] font-mono text-slate-500 mt-1 uppercase print-text-slate">
-                Composite Team Index
-              </p>
-            </div>
-
-            {/* Metric 1: Communication */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-amber-500 dark:text-amber-400 font-bold print-text-dark">COMMUNICATION</span>
-                <span className="text-amber-500 dark:text-amber-300 font-bold print-text-dark">{peerMetrics.commAvg.toFixed(1)} / 5.0</span>
-              </div>
-              <div className="w-full h-2 bg-slate-200 dark:bg-slate-900 rounded-full overflow-hidden border border-amber-500/20 print-bg-white print-border-slate">
-                <div
-                  className="h-full bg-amber-500 dark:bg-amber-400 rounded-full shadow-[0_0_8px_rgba(251,191,36,0.6)]"
-                  style={{ width: `${(peerMetrics.commAvg / 5) * 100}%` }}
-                />
-              </div>
-              <span className="text-[9px] font-mono text-slate-500 uppercase print-text-slate">Clarity & In-Match Callouts</span>
-            </div>
-
-            {/* Metric 2: Tactical Teamplay */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-emerald-500 dark:text-emerald-400 font-bold print-text-dark">TACTICAL TEAMPLAY</span>
-                <span className="text-emerald-500 dark:text-emerald-300 font-bold print-text-dark">{peerMetrics.teamAvg.toFixed(1)} / 5.0</span>
-              </div>
-              <div className="w-full h-2 bg-slate-200 dark:bg-slate-900 rounded-full overflow-hidden border border-emerald-500/20 print-bg-white print-border-slate">
-                <div
-                  className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(52,211,153,0.6)]"
-                  style={{ width: `${(peerMetrics.teamAvg / 5) * 100}%` }}
-                />
-              </div>
-              <span className="text-[9px] font-mono text-slate-500 uppercase print-text-slate">Synergy & Strategy Execution</span>
-            </div>
-
-            {/* Metric 3: Mechanical Execution */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-cyan-600 dark:text-cyan-400 font-bold print-text-dark">MECHANICAL EXECUTION</span>
-                <span className="text-cyan-600 dark:text-cyan-300 font-bold print-text-dark">{peerMetrics.mechAvg.toFixed(1)} / 5.0</span>
-              </div>
-              <div className="w-full h-2 bg-slate-200 dark:bg-slate-900 rounded-full overflow-hidden border border-cyan-500/20 print-bg-white print-border-slate">
-                <div
-                  className="h-full bg-cyan-500 dark:bg-cyan-400 rounded-full shadow-[0_0_8px_rgba(6,182,212,0.6)]"
-                  style={{ width: `${(peerMetrics.mechAvg / 5) * 100}%` }}
-                />
-              </div>
-              <span className="text-[9px] font-mono text-slate-500 uppercase print-text-slate">Micro-Precision & Consistency</span>
-            </div>
-          </div>
-        </div>
+        <SoftSkillCalibrationCard evaluations={evaluations} />
 
         {/* TOURNAMENTS & EDUCATION GRID */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 print-avoid-break">

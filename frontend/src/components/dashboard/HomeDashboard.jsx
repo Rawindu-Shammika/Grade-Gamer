@@ -583,27 +583,68 @@ export const HomeDashboard = () => {
           </div>
 
           {/* 2. LINEAR GROWTH SLOPE */}
-          <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
-            <div className={`flex items-center justify-center w-10 h-10 rounded-lg border ${
-              dashLCC.slopeNumeric >= 0
-                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400'
-                : 'bg-rose-950/40 border-rose-500/30 text-rose-400'
-            }`}>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                LINEAR GROWTH SLOPE
+          {(() => {
+            const totalMatches = Number(dashboardStats.totalMatches);
+            const slopeValue = dashLCC.slopeNumeric;
+            const isCalibrated = totalMatches > 0 && !isNaN(slopeValue);
+            const isPositive = slopeValue > 0;
+            const formattedSlope = dashLCC.slope;
+
+            return (
+              <div
+                className={`flex items-center gap-4 rounded-xl border p-4 transition-all duration-200 ${
+                  isCalibrated
+                    ? 'border-slate-800/80 bg-[#08101a]'
+                    : 'border-slate-800/40 bg-[#040810]/50 opacity-60'
+                }`}
+              >
+                {/* Icon */}
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg border ${
+                    isCalibrated
+                      ? isPositive
+                        ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30'
+                        : 'bg-rose-950/40 text-rose-400 border-rose-500/30'
+                      : 'bg-slate-900/50 text-slate-600 border-slate-800'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                    />
+                  </svg>
+                </div>
+
+                {/* Label and Value */}
+                <div>
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
+                    LINEAR GROWTH SLOPE
+                  </span>
+                  <div className="flex items-baseline gap-1 mt-0.5 font-mono">
+                    <span
+                      className={`text-base sm:text-lg font-mono font-black ${
+                        isCalibrated
+                          ? isPositive
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      {isCalibrated ? formattedSlope : '0.00'}
+                    </span>
+                    {!isCalibrated && (
+                      <span className="text-[9px] uppercase tracking-wider text-slate-600 font-bold ml-1.5">
+                        (Uncalibrated)
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className={`text-base sm:text-lg font-mono font-black ${
-                dashLCC.slopeNumeric >= 0 ? 'text-emerald-400' : 'text-rose-400'
-              }`}>
-                {dashLCC.slope}
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* 3. HOURS COMPETED */}
           <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">

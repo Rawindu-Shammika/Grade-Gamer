@@ -1,27 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createTelemetryRouter } from './src/routes/telemetryRoutes.js';
-import F1UdpListener from './src/services/f1UdpListener.js';
+import { supabase } from './src/config/supabase.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
-const udpPort = parseInt(process.env.UDP_PORT || '20777', 10);
 
 app.use(cors());
 app.use(express.json());
 
-import { supabase } from './src/config/supabase.js';
-
-// Initialize F1 UDP Telemetry Listener
-const udpListener = new F1UdpListener(udpPort);
-udpListener.start();
-
-// Mount telemetry routes
-app.use('/api/telemetry', createTelemetryRouter(udpListener));
-
+// ----------------------------------------------------
+// VALORANT API SYNC ROUTE (100% UNTOUCHED & PROTECTED)
+// ----------------------------------------------------
 app.post('/api/sync-valorant', async (req, res) => {
   const { userId, gameTitle = 'Valorant', gamerTag, tagLine, region = 'ap' } = req.body;
 
@@ -40,7 +32,6 @@ app.post('/api/sync-valorant', async (req, res) => {
   const encodedTag = encodeURIComponent(cleanTag);
 
   try {
-    // Add before querying HenrikDev API:
     const { data: userProfile, error: profileErr } = await supabase
       .from('profiles')
       .select('valorant_ign, valorant_tag')
@@ -50,7 +41,7 @@ app.post('/api/sync-valorant', async (req, res) => {
     if (userProfile?.valorant_ign && userProfile?.valorant_tag) {
       const boundHandle = `${userProfile.valorant_ign}#${userProfile.valorant_tag}`.toLowerCase();
       const inputHandle = `${cleanName}#${cleanTag}`.toLowerCase();
-      
+
       if (boundHandle !== inputHandle) {
         return res.status(403).json({
           error: `Access Denied: Your GradeGamer profile is permanently bound to ${userProfile.valorant_ign}#${userProfile.valorant_tag}. Multi-account switching is prohibited.`
@@ -58,7 +49,6 @@ app.post('/api/sync-valorant', async (req, res) => {
       }
     }
 
-    // HenrikDev Valorant V3 matches endpoint with strict competitive mode filter
     const url = `https://api.henrikdev.xyz/valorant/v3/matches/${region}/${encodedName}/${encodedTag}?mode=competitive&size=1`;
     console.log(`[HenrikDev API Request]: ${url}`);
 
@@ -85,7 +75,7 @@ app.post('/api/sync-valorant', async (req, res) => {
       return res.status(400).json({ error: 'Could not extract valid match ID from response.' });
     }
 
-    // --- DUPLICATE MATCH CHECK ---
+    // Duplicate Check
     const { data: existingRecords, error: checkError } = await supabase
       .from('valorant_match_telemetry')
       .select('id, metrics_payload')
@@ -131,7 +121,6 @@ app.post('/api/sync-valorant', async (req, res) => {
     const totalShots = Math.max(1, headshots + bodyshots + legshots);
     const hsPct = Number(((headshots / totalShots) * 100).toFixed(1));
 
-    // GradeGamer Performance Score P: ((ACS / 350) * 60) + ((K/D / 2.0) * 40)
     const performanceScore = Number(((acs / 350) * 60 + (kd / 2.0) * 40).toFixed(1));
 
     const payload = {
@@ -155,7 +144,6 @@ app.post('/api/sync-valorant', async (req, res) => {
       source: 'HENRIK_VALORANT_API'
     };
 
-    // Insert Unique Record into Supabase
     const { data: inserted, error: dbError } = await supabase
       .from('valorant_match_telemetry')
       .insert({
@@ -170,7 +158,6 @@ app.post('/api/sync-valorant', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    // After successful match lookup and telemetry insertion:
     if (!userProfile?.valorant_ign) {
       await supabase
         .from('profiles')
@@ -187,12 +174,11 @@ app.post('/api/sync-valorant', async (req, res) => {
   }
 });
 
-// Basic health check route
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
-    uptime: process.uptime(),
-    udpListenerPort: udpPort
+    uptime: process.uptime()
   });
 });
 
