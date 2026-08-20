@@ -13,6 +13,9 @@ export const AtsResumeDocument = ({
 }) => {
   const GAME_METADATA = {
     valorant: { label: 'VALORANT', statKey: 'valorant' },
+    dota_2: { label: 'DOTA 2', statKey: 'dota2' },
+    dota2: { label: 'DOTA 2', statKey: 'dota2' },
+    'dota 2': { label: 'DOTA 2', statKey: 'dota2' },
     cs2: { label: 'COUNTER-STRIKE 2', statKey: 'cs2' },
     'counter-strike 2': { label: 'COUNTER-STRIKE 2', statKey: 'cs2' },
     counter_strike_2: { label: 'COUNTER-STRIKE 2', statKey: 'cs2' },

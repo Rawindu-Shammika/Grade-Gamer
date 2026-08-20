@@ -4,6 +4,9 @@ import useAuth from '../hooks/useAuth';
 import { calculateLCCMetrics } from '../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
+import { syncDota2Account } from '../services/dotaSyncService';
+import { getDotaHeroName } from '../utils/dotaHeroes';
+import { calculateDotaLinearGrowth } from '../utils/dotaStats';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -14,6 +17,17 @@ export const AUTOMATED_GAMES = [
   'F1 25',
   'Assetto Corsa'
 ];
+
+const getTelemetryTable = (gameKey) => {
+  const normalized = (gameKey || '').toLowerCase().trim();
+  if (normalized === 'dota2' || normalized === 'dota 2') {
+    return 'dota2_match_telemetry';
+  }
+  if (normalized === 'valorant') {
+    return 'valorant_match_telemetry';
+  }
+  return 'game_match_telemetry';
+};
 
 export const MANUAL_GAMES = [
   'EA FC 27',
@@ -65,12 +79,16 @@ export default function GameData() {
   const [isSyncingTracker, setIsSyncingTracker] = useState(false);
   const [isBound, setIsBound] = useState(false);
 
+  // Dota 2 API state
+  const [dotaAccountId, setDotaAccountId] = useState('');
+  const [isDotaBound, setIsDotaBound] = useState(false);
+
   useEffect(() => {
     const checkBoundProfile = async () => {
       if (!user?.id) return;
       const { data } = await supabase
         .from('profiles')
-        .select('valorant_ign, valorant_tag')
+        .select('valorant_ign, valorant_tag, steam_id')
         .eq('id', user.id)
         .single();
 
@@ -78,6 +96,10 @@ export default function GameData() {
         setTrackerGamerTag(data.valorant_ign);
         setTrackerTagLine(data.valorant_tag);
         setIsBound(true);
+      }
+      if (data?.steam_id) {
+        setDotaAccountId(data.steam_id);
+        setIsDotaBound(true);
       }
     };
     checkBoundProfile();
@@ -120,18 +142,17 @@ export default function GameData() {
     }
   }, [registeredTitles, selectedGame]);
 
-  // 2. Fetch Telemetry History for Selected Game
   const fetchTelemetryHistory = async () => {
     if (!user?.id) return;
     setIsLoadingFeed(true);
     try {
-      const tableName = selectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'game_match_telemetry';
+      const tableName = getTelemetryTable(selectedGame);
+      const orderBy = tableName === 'game_match_telemetry' ? 'match_date' : 'created_at';
       const { data, error } = await supabase
         .from(tableName)
         .select('*')
         .eq('user_id', user.id)
-        .eq('game_title', selectedGame)
-        .order('match_date', { ascending: true });
+        .order(orderBy, { ascending: true });
 
       if (!error && data) {
         setMatchHistory(data);
@@ -185,7 +206,39 @@ export default function GameData() {
   }, [activeGameLogs, selectedGame, actInfo]);
 
   // Compute LCC strictly using ACS via unified calculator on active cycle matches
-  const lccResults = React.useMemo(() => calculateLCCMetrics(cycleMatches), [cycleMatches]);
+  const lccResults = React.useMemo(() => {
+    if (selectedGame === 'Dota 2') {
+      const dotaLcc = calculateDotaLinearGrowth(cycleMatches);
+      const list = cycleMatches || [];
+      const totalN = list.length;
+      const windowSize = Math.min(5, totalN);
+      
+      const baselineSubset = list.slice(0, windowSize);
+      const avgBaseline = baselineSubset.reduce((sum, m) => sum + Number(m.performance_score || m.metrics_payload?.performance_score || 0), 0) / Math.max(1, baselineSubset.length);
+      
+      const currentSubset = list.slice(-windowSize);
+      const avgCurrent = currentSubset.reduce((sum, m) => sum + Number(m.performance_score || m.metrics_payload?.performance_score || 0), 0) / Math.max(1, currentSubset.length);
+      
+      return {
+        pBaseline: `${avgBaseline.toFixed(1)} Pts`,
+        pCurrent: `${avgCurrent.toFixed(1)} Pts`,
+        nMatches: totalN,
+        slope: dotaLcc.slope > 0 ? `+${dotaLcc.slope.toFixed(2)}` : dotaLcc.slope.toFixed(2),
+        slopeNumeric: dotaLcc.slope,
+      };
+    }
+    return calculateLCCMetrics(cycleMatches);
+  }, [cycleMatches, selectedGame]);
+
+  const latestRank = React.useMemo(() => {
+    if (cycleMatches.length === 0) return 'UNRATED';
+    const latest = cycleMatches[cycleMatches.length - 1];
+    const payload = latest?.metrics_payload || latest || {};
+    if (selectedGame === 'Dota 2') {
+      return payload.competitive_rank || 'UNRATED';
+    }
+    return payload.rank || 'UNRATED';
+  }, [cycleMatches, selectedGame]);
 
   // 4. Ingestion Handler
   const handleIngestMatch = async (type) => {
@@ -247,7 +300,7 @@ export default function GameData() {
   // 5. Delete Telemetry Record
   const handleDeleteTelemetry = async (id) => {
     try {
-      const tableName = selectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'game_match_telemetry';
+      const tableName = getTelemetryTable(selectedGame);
       const { error } = await supabase.from(tableName).delete().eq('id', id);
       if (!error) {
         setMatchHistory((prev) => prev.filter((item) => item.id !== id));
@@ -304,6 +357,44 @@ export default function GameData() {
         show: true,
         type: 'error',
         message: err.message || 'Failed to ingest match telemetry.'
+      });
+    } finally {
+      setIsSyncingTracker(false);
+    }
+  };
+
+  const handleSyncDota2FromAPI = async () => {
+    if (!user?.id) {
+      showNotification({ show: true, type: 'error', message: 'Please sign in before syncing Dota 2 match telemetry.' });
+      return;
+    }
+    if (!dotaAccountId) {
+      showNotification({ show: true, type: 'error', message: 'Please enter your 32-bit Steam Account ID.' });
+      return;
+    }
+
+    setIsSyncingTracker(true);
+    try {
+      const data = await syncDota2Account(user.id, dotaAccountId);
+
+      // Trigger Custom Ingestion Notification
+      showNotification({
+        show: true,
+        type: 'success',
+        title: 'DOTA 2 TELEMETRY INGESTED',
+        map: `${data.payload?.outcome || 'VICTORY'} (Hero #${data.payload?.hero_id || 'Unknown'})`,
+        score: data.performanceScore,
+        acs: `${data.payload?.gpm || 0} GPM`,
+        kd: data.payload?.kda || 0.00
+      });
+
+      await fetchTelemetryHistory();
+      setIsDotaBound(true);
+    } catch (err) {
+      showNotification({
+        show: true,
+        type: 'error',
+        message: err.message || 'Failed to ingest Dota 2 telemetry.'
       });
     } finally {
       setIsSyncingTracker(false);
@@ -590,6 +681,10 @@ export default function GameData() {
                               <p className="text-xs text-slate-400 mt-0.5">
                                 GradeGamer ID is permanently synchronized to this Riot account.
                               </p>
+                              <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
+                                <span className="text-slate-500 uppercase font-bold">Standing:</span>
+                                <span className="text-emerald-400 font-black uppercase">{latestRank}</span>
+                              </div>
                             </div>
                           </div>
 
@@ -690,12 +785,113 @@ export default function GameData() {
                       </p>
                     </div>
                   </div>
-                ) : (selectedGame === 'Dota 2' || selectedGame === 'League of Legends') ? (
+                ) : selectedGame === 'Dota 2' ? (
+                  <>
+                    {/* --- DOTA 2 ACCOUNT GATEWAY --- */}
+                    {isDotaBound ? (
+                      /* BOUND / SYNCHRONIZED STATE */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          {/* Identity Badge */}
+                          <div className="flex items-center space-x-4">
+                            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xl font-black">
+                              🛡️
+                            </div>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-white font-black text-lg tracking-wide">
+                                  Steam Account ID
+                                </span>
+                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                                  {dotaAccountId}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                GradeGamer ID is permanently bound to this Dota 2 Friend ID.
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
+                                <span className="text-slate-500 uppercase font-bold">Standing:</span>
+                                <span className={`uppercase ${
+                                  latestRank.startsWith('IMMORTAL')
+                                    ? 'text-amber-400 font-black'
+                                    : latestRank.startsWith('DIVINE') || latestRank.startsWith('ANCIENT')
+                                    ? 'text-purple-400 font-bold'
+                                    : latestRank.startsWith('LEGEND') || latestRank.startsWith('ARCHON')
+                                    ? 'text-cyan-400 font-bold'
+                                    : 'text-slate-300 font-bold'
+                                }`}>{latestRank}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Sync Trigger Button */}
+                          <button
+                            onClick={handleSyncDota2FromAPI}
+                            disabled={isSyncingTracker}
+                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
+                          >
+                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* FIRST-TIME USER ONBOARDING */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                              Initial Setup
+                            </div>
+                            <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                              Link Dota 2 Identity
+                            </h3>
+                          </div>
+                          <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
+                            UNLINKED
+                          </span>
+                        </div>
+
+                        {/* PERMANENT BINDING WARNING BANNER */}
+                        <div className="bg-amber-950/30 border border-amber-500/40 rounded-lg p-3 text-xs text-amber-200/90 leading-relaxed flex items-start space-x-2.5">
+                          <span className="text-base shrink-0">⚠️</span>
+                          <div>
+                            <strong className="font-bold text-amber-300">IMPORTANT:</strong> Once linked, your GradeGamer profile will be <strong className="text-white">permanently bound</strong> to this Dota 2 Account ID. Multi-account switching is disabled to ensure telemetry authenticity and anti-smurf integrity.
+                          </div>
+                        </div>
+
+                        {/* COMPACT INPUT GRID */}
+                        <div className="grid grid-cols-1 gap-3 items-end pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              32-bit Steam Account ID (Friend ID)
+                            </label>
+                            <input
+                              type="text"
+                              value={dotaAccountId}
+                              onChange={(e) => setDotaAccountId(e.target.value)}
+                              placeholder="e.g. 104358896"
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        {/* BIND AND SYNC ACTION BUTTON */}
+                        <button
+                          onClick={handleSyncDota2FromAPI}
+                          disabled={isSyncingTracker}
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                        >
+                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC DOTA 2 ACCOUNT'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : selectedGame === 'League of Legends' ? (
                   <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
                     <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
                       <div>
                         <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                          OpenDota / Riot API Integration
+                          Riot API Integration
                         </div>
                         <h3 className="text-sm font-black text-white uppercase tracking-wide">
                           Match ID Injection Node
@@ -839,20 +1035,33 @@ export default function GameData() {
         ) : (
           <div className="space-y-3">
             {cycleMatches.map((log, idx) => {
-              if (selectedGame === 'Valorant') {
+              if (selectedGame === 'Valorant' || selectedGame === 'Dota 2') {
+                const isDota = selectedGame === 'Dota 2';
                 const roundsWon = log.metrics_payload?.rounds_won ?? log.rounds_won;
                 const roundsLost = log.metrics_payload?.rounds_lost ?? log.rounds_lost;
-                const formattedScore = (roundsWon !== undefined && roundsLost !== undefined) 
-                  ? `${roundsWon} - ${roundsLost}` 
-                  : (log.metrics_payload?.score_rounds || log.score || '13 - 10');
-                const mapName = log.metrics_payload?.map || log.map || 'LOTUS';
-                const agentName = log.metrics_payload?.agent || log.agent || 'OMEN';
-                const kdVal = log.metrics_payload?.kd || log.metrics_payload?.kd_ratio || log.kd || log.kd_ratio || 1.0;
+                const formattedScore = isDota 
+                  ? (log.metrics_payload?.outcome || 'VICTORY')
+                  : (roundsWon !== undefined && roundsLost !== undefined) 
+                    ? `${roundsWon} - ${roundsLost}` 
+                    : (log.metrics_payload?.score_rounds || log.score || '13 - 10');
+                const mapName = isDota 
+                  ? getDotaHeroName(log.metrics_payload?.hero_id)
+                  : (log.metrics_payload?.map || log.map || 'LOTUS');
+                const agentName = isDota 
+                  ? (log.metrics_payload?.team || 'Radiant')
+                  : (log.metrics_payload?.agent || log.agent || 'OMEN');
+                const kdVal = isDota 
+                  ? (log.metrics_payload?.kda || 1.0)
+                  : (log.metrics_payload?.kd || log.metrics_payload?.kd_ratio || log.kd || log.kd_ratio || 1.0);
                 const killsVal = log.metrics_payload?.kills || log.kills || 0;
                 const deathsVal = log.metrics_payload?.deaths || log.deaths || 0;
                 const assistsVal = log.metrics_payload?.assists || log.assists || 0;
-                const acsVal = log.metrics_payload?.acs || log.acs || 210;
-                const hsVal = log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent;
+                const acsVal = isDota 
+                  ? (log.metrics_payload?.gpm || 0)
+                  : (log.metrics_payload?.acs || log.acs || 210);
+                const hsVal = isDota 
+                  ? (log.metrics_payload?.xpm)
+                  : (log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent);
                 const ratingVal = log.performance_score || log.calculated_rating || log.rating || 65.0;
                 const dateVal = new Date(log.created_at || log.match_date || Date.now()).toLocaleDateString();
                 const idVal = String(log.id || log.match_id || '');
@@ -870,7 +1079,7 @@ export default function GameData() {
                           {formattedScore}
                         </div>
                         <div className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">
-                          SCORE
+                          {isDota ? 'OUTCOME' : 'SCORE'}
                         </div>
                       </div>
 
@@ -887,7 +1096,7 @@ export default function GameData() {
                         
                         {/* Meta Tags */}
                         <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 mt-0.5">
-                          <span className="text-cyan-500 font-semibold uppercase">Competitive</span>
+                          <span className="text-cyan-500 font-semibold uppercase">{isDota ? 'Ranked Match' : 'Competitive'}</span>
                           <span>•</span>
                           <span>{dateVal}</span>
                           <span className="hidden sm:inline">•</span>
@@ -903,7 +1112,7 @@ export default function GameData() {
                         <div className={`text-xs sm:text-sm font-black ${Number(kdVal) >= 1 ? 'text-emerald-400' : 'text-slate-300'}`}>
                           {Number(kdVal).toFixed(2)}
                         </div>
-                        <div className="text-[9px] text-slate-500 tracking-wider">K/D</div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'KDA' : 'K/D'}</div>
                       </div>
 
                       {/* KDA */}
@@ -911,7 +1120,7 @@ export default function GameData() {
                         <div className="text-xs sm:text-sm font-bold text-slate-200">
                           <span className="text-cyan-400">{killsVal}</span> / <span className="text-rose-400">{deathsVal}</span> / <span className="text-slate-400">{assistsVal}</span>
                         </div>
-                        <div className="text-[9px] text-slate-500 tracking-wider">KDA</div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">K/D/A</div>
                       </div>
 
                       {/* ACS */}
@@ -919,16 +1128,16 @@ export default function GameData() {
                         <div className="text-xs sm:text-sm font-black text-white">
                           {acsVal}
                         </div>
-                        <div className="text-[9px] text-slate-500 tracking-wider">ACS</div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'GPM' : 'ACS'}</div>
                       </div>
 
                       {/* HS% */}
                       {hsVal !== undefined && (
                         <div className="text-center hidden md:block">
                           <div className="text-xs sm:text-sm font-bold text-emerald-400">
-                            {hsVal}%
+                            {isDota ? `${hsVal} XP` : `${hsVal}%`}
                           </div>
-                          <div className="text-[9px] text-slate-500 tracking-wider">HS%</div>
+                          <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'XPM' : 'HS%'}</div>
                         </div>
                       )}
 

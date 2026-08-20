@@ -4,6 +4,8 @@ import useAuth from "../../hooks/useAuth";
 import { calculateLCCMetrics } from '../../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../../utils/valorantActService';
 import { applyGlobalActReset } from '../../utils/actDataSync';
+import { getDotaHeroName } from '../../utils/dotaHeroes';
+import { calculateDotaLinearGrowth } from '../../utils/dotaStats';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -37,6 +39,34 @@ const DASHBOARD_BANNERS = [
 const getRankTheme = (tierName) => {
   const rank = String(tierName || '').toUpperCase();
 
+  if (rank.includes('HERALD') || rank.includes('GUARDIAN')) {
+    return { 
+      text: 'text-stone-400', 
+      boxBorder: 'border-stone-500/30',
+      dot: 'bg-stone-400 shadow-[0_0_10px_rgba(168,162,158,0.8)]' 
+    };
+  }
+  if (rank.includes('CRUSADER') || rank.includes('ARCHON')) {
+    return { 
+      text: 'text-cyan-400', 
+      boxBorder: 'border-cyan-500/30',
+      dot: 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]' 
+    };
+  }
+  if (rank.includes('LEGEND')) {
+    return { 
+      text: 'text-yellow-400', 
+      boxBorder: 'border-yellow-500/30',
+      dot: 'bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.85)]' 
+    };
+  }
+  if (rank.includes('ANCIENT') || rank.includes('DIVINE')) {
+    return { 
+      text: 'text-purple-450 dark:text-purple-400', 
+      boxBorder: 'border-purple-500/30',
+      dot: 'bg-purple-400 shadow-[0_0_12px_rgba(192,132,252,0.85)]' 
+    };
+  }
   if (rank.includes('IRON')) {
     return { 
       text: 'text-stone-400', 
@@ -106,6 +136,17 @@ const getRankTheme = (tierName) => {
     boxBorder: 'border-cyan-500/30',
     dot: 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]' 
   };
+};
+
+const getTelemetryTable = (gameKey) => {
+  const normalized = (gameKey || '').toLowerCase().trim();
+  if (normalized === 'dota2' || normalized === 'dota 2') {
+    return 'dota2_match_telemetry';
+  }
+  if (normalized === 'valorant') {
+    return 'valorant_match_telemetry';
+  }
+  return 'game_match_telemetry';
 };
 
 export const HomeDashboard = () => {
@@ -253,27 +294,33 @@ export const HomeDashboard = () => {
         // Fetch profile handle
         const { data: profile } = await supabase
           .from('profiles')
-          .select('valorant_ign, valorant_tag')
+          .select('valorant_ign, valorant_tag, steam_id')
           .eq('id', user.id)
           .maybeSingle();
 
-        if (isMounted && profile?.valorant_ign) {
-          setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
+        if (isMounted) {
+          if (selectedGame === 'Dota 2' && profile?.steam_id) {
+            setBoundHandle(`STEAM ID: ${profile.steam_id}`);
+          } else if (profile?.valorant_ign) {
+            setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
+          } else {
+            setBoundHandle('UNLINKED');
+          }
         }
 
         // Fetch matches from telemetry table dynamically
-        const tableName = selectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'game_match_telemetry';
+        const tableName = getTelemetryTable(selectedGame);
         let query = supabase
           .from(tableName)
           .select('*')
           .eq('user_id', user.id);
           
-        if (selectedGame !== 'Valorant') {
+        if (tableName === 'game_match_telemetry') {
           query = query.eq('game_title', selectedGame);
         }
 
         const { data: matches, error } = await query.order(
-          selectedGame === 'Valorant' ? 'created_at' : 'match_date', 
+          tableName === 'game_match_telemetry' ? 'match_date' : 'created_at', 
           { ascending: false }
         );
 
@@ -318,14 +365,29 @@ export const HomeDashboard = () => {
   const latestRecord = totalMatchesCount > 0 ? valorantMatches[0] : null;
   const payload = latestRecord?.metrics_payload || latestRecord || {};
 
-  const liveRank = payload?.rank || payload?.rank_tier || (totalMatchesCount > 0 ? 'Diamond 3' : 'Unrated');
+  const liveRank = useMemo(() => {
+    if (selectedGame === 'Dota 2') {
+      return payload?.competitive_rank || profile?.dota2_rank || 'UNRATED';
+    }
+    return payload?.rank || 'UNRATED';
+  }, [selectedGame, payload, profile]);
+
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
   const activeDashboardMatches = useMemo(() => {
     return applyGlobalActReset(valorantMatches || [], selectedGame, actInfo);
   }, [valorantMatches, selectedGame, actInfo]);
 
-  const dashLCC = React.useMemo(() => calculateLCCMetrics([...(activeDashboardMatches || [])].reverse()), [activeDashboardMatches]);
+  const dashLCC = React.useMemo(() => {
+    const list = [...(activeDashboardMatches || [])].reverse();
+    if (selectedGame === 'Dota 2') {
+      const dotaLcc = calculateDotaLinearGrowth(list);
+      return {
+        slopeNumeric: dotaLcc.slope,
+      };
+    }
+    return calculateLCCMetrics(list);
+  }, [activeDashboardMatches, selectedGame]);
 
   // Calculate dynamic dashboard stats from the active matches stream
   const dashboardStats = React.useMemo(() => {
@@ -368,8 +430,25 @@ export const HomeDashboard = () => {
 
     return ascMatches.map((match, idx) => {
       const ratingVal = match.performance_score || match.calculated_rating || match.rating || 50;
-      const mapName = match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH';
-      const kdVal = match.metrics_payload?.kd || match.metrics_payload?.kd_ratio || match.kd || match.kd_ratio || '1.0';
+      const mapName = selectedGame === 'Dota 2'
+        ? getDotaHeroName(match.metrics_payload?.hero_id)
+        : (match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH');
+      let kdVal = '1.00';
+      const pl = match.metrics_payload || {};
+      if (pl.kda !== undefined && pl.kda !== null) {
+        kdVal = Number(pl.kda).toFixed(2);
+      } else if (pl.kd_ratio !== undefined && pl.kd_ratio !== null) {
+        kdVal = Number(pl.kd_ratio).toFixed(2);
+      } else if (pl.kd !== undefined && pl.kd !== null) {
+        kdVal = Number(pl.kd).toFixed(2);
+      } else if (pl.kills !== undefined && pl.deaths !== undefined) {
+        const kills = Number(pl.kills || 0);
+        const deaths = Math.max(1, Number(pl.deaths || 1));
+        const assists = Number(pl.assists || 0);
+        kdVal = ((kills + assists) / deaths).toFixed(2);
+      } else {
+        kdVal = Number(match.kd || match.kd_ratio || 1.0).toFixed(2);
+      }
 
       let rawACS = 0;
       if (match.acs !== undefined && match.acs !== null && !isNaN(match.acs)) {
@@ -527,26 +606,54 @@ export const HomeDashboard = () => {
         </div>
 
         {/* COMPETITIVE STANDING BANNER */}
-        <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4">
-          <div className="flex items-center gap-3.5">
-            
-            {/* FRAMED BOX WITH BLINKING RANK DOT */}
-            <div className={`w-10 h-10 rounded-xl bg-[#070e17] border flex items-center justify-center shrink-0 ${getRankTheme(liveRank).boxBorder}`}>
-              <div className={`w-3 h-3 rounded-full animate-pulse ${getRankTheme(liveRank).dot}`}></div>
-            </div>
-
-            {/* DETAILS */}
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+        {loading ? (
+          <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4 animate-pulse">
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center shrink-0">
+                <div className="w-3 h-3 rounded-full bg-slate-700"></div>
               </div>
-              <div className={`text-base sm:text-lg font-black uppercase tracking-wide ${getRankTheme(liveRank).text}`}>
-                {liveRank || 'IMMORTAL 1'}
+              <div>
+                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
+                  {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+                </div>
+                <div className="h-5 w-32 bg-slate-800 rounded mt-1"></div>
               </div>
             </div>
-
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4">
+            <div className="flex items-center gap-3.5">
+              
+              {/* FRAMED BOX WITH BLINKING RANK DOT */}
+              <div className={`w-10 h-10 rounded-xl bg-[#070e17] border flex items-center justify-center shrink-0 ${getRankTheme(liveRank).boxBorder}`}>
+                <div className={`w-3 h-3 rounded-full animate-pulse ${getRankTheme(liveRank).dot}`}></div>
+              </div>
+
+              {/* DETAILS */}
+              <div>
+                <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                  {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+                </div>
+                {(() => {
+                  const rankColor = (liveRank || '').startsWith('IMMORTAL')
+                    ? 'text-amber-400 font-black'
+                    : (liveRank || '').startsWith('DIVINE') || (liveRank || '').startsWith('ANCIENT')
+                    ? 'text-purple-450 dark:text-purple-400 font-bold'
+                    : (liveRank || '').startsWith('LEGEND') || (liveRank || '').startsWith('ARCHON')
+                    ? 'text-cyan-400 font-bold'
+                    : 'text-slate-300 font-bold';
+
+                  return (
+                    <div className={`text-base sm:text-lg uppercase tracking-wide ${rankColor}`}>
+                      {liveRank}
+                    </div>
+                  );
+                })()}
+              </div>
+
+            </div>
+          </div>
+        )}
 
         {/* OFFICIAL VALORANT ACT CYCLE BANNER */}
         {String(selectedGame || '').toLowerCase().includes('val') && actInfo?.title && (
@@ -769,7 +876,9 @@ export const HomeDashboard = () => {
                     </div>
                   </div>
                   <div className="text-right font-mono">
-                    <div className="text-xs font-bold text-slate-200">K/D: {item.kd}</div>
+                    <div className="text-xs font-bold text-slate-200">
+                      {selectedGame === 'Dota 2' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
+                    </div>
                     <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
                   </div>
                 </div>

@@ -9,6 +9,7 @@ import { PDFDownloadLink } from '@react-pdf/renderer';
 import { ResumePDFDocument } from '../components/ResumePDFDocument';
 import { AtsResumeDocument } from '../components/resume/AtsResumeDocument';
 import { calculateLCCMetrics } from '../utils/lccCalculator';
+import { calculateDotaLinearGrowth } from '../utils/dotaStats';
 import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
 import { useMemo } from 'react';
@@ -157,6 +158,14 @@ export const VerifiedProfile = () => {
           .from('valorant_match_telemetry')
           .select('*')
           .eq('user_id', targetUserId)
+          .eq('game_title', 'Valorant')
+          .order('created_at', { ascending: true });
+
+        // Fetch Dota 2 matches
+        const { data: dotaMatches } = await supabase
+          .from('dota2_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
           .order('created_at', { ascending: true });
 
         // Fetch other games matches
@@ -168,6 +177,7 @@ export const VerifiedProfile = () => {
 
         const stats = {
           valorant: { hours: 0, slope: 0, matches: 0 },
+          dota2: { hours: 0, slope: 0, matches: 0 },
           cs2: { hours: 0, slope: 0, matches: 0 },
           assettoCorsa: { hours: 0, slope: 0, matches: 0 },
           f1_25: { hours: 0, slope: 0, matches: 0 },
@@ -214,16 +224,19 @@ export const VerifiedProfile = () => {
           }, 0);
           const hours = totalSeconds / 3600;
 
-          const lcc = calculateLCCMetrics(filteredList);
+          const lcc = gameKey === 'dota2'
+            ? calculateDotaLinearGrowth(filteredList)
+            : calculateLCCMetrics(filteredList);
 
           stats[gameKey] = {
             hours: parseFloat(hours.toFixed(1)),
-            slope: lcc.slopeNumeric,
+            slope: gameKey === 'dota2' ? lcc.slope : lcc.slopeNumeric,
             matches: count,
           };
         };
 
         processGameMatches(valMatches, 'valorant');
+        processGameMatches(dotaMatches, 'dota2');
 
         const matchesByGame = {};
         if (otherMatches) {

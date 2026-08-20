@@ -5,6 +5,7 @@ import { supabase } from '../../services/supabaseClient';
 import { SoftSkillCalibrationCard } from './SoftSkillCalibrationCard';
 import { ResumeTelemetrySection } from './ResumeTelemetrySection';
 import { calculateLCCMetrics } from '../../utils/lccCalculator';
+import { calculateDotaLinearGrowth } from '../../utils/dotaStats';
 import { fetchCurrentValorantAct } from '../../utils/valorantActService';
 import { applyGlobalActReset } from '../../utils/actDataSync';
 
@@ -80,6 +81,13 @@ export const VerifiedResumeCard = ({
           .eq('user_id', targetUserId)
           .order('created_at', { ascending: true });
 
+        // Fetch Dota 2 matches
+        const { data: dotaMatches } = await supabase
+          .from('dota2_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
         // Fetch other games matches
         const { data: otherMatches } = await supabase
           .from('game_match_telemetry')
@@ -89,6 +97,7 @@ export const VerifiedResumeCard = ({
 
         const stats = {
           valorant: { hours: 0, slope: 0, matches: 0 },
+          dota2: { hours: 0, slope: 0, matches: 0 },
           cs2: { hours: 0, slope: 0, matches: 0 },
           assettoCorsa: { hours: 0, slope: 0, matches: 0 },
           f1_25: { hours: 0, slope: 0, matches: 0 },
@@ -139,17 +148,20 @@ export const VerifiedResumeCard = ({
           }, 0);
           const hours = totalSeconds / 3600;
 
-          // Calculate Linear Growth Slope (using the unified LCC metrics)
-          const lcc = calculateLCCMetrics(filteredList);
+          // Calculate Linear Growth Slope (using the unified LCC metrics or Dota regression)
+          const lcc = gameKey === 'dota2'
+            ? calculateDotaLinearGrowth(filteredList)
+            : calculateLCCMetrics(filteredList);
 
           stats[gameKey] = {
             hours: parseFloat(hours.toFixed(1)),
-            slope: lcc.slopeNumeric,
+            slope: gameKey === 'dota2' ? lcc.slope : lcc.slopeNumeric,
             matches: count,
           };
         };
 
         processGameMatches(valMatches, 'valorant');
+        processGameMatches(dotaMatches, 'dota2');
 
         const matchesByGame = {};
         if (otherMatches) {
