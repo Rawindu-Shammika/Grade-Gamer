@@ -168,6 +168,20 @@ export const VerifiedProfile = () => {
           .eq('user_id', targetUserId)
           .order('created_at', { ascending: true });
 
+        // Fetch League of Legends matches
+        const { data: lolMatches } = await supabase
+          .from('lol_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
+        // Fetch CS2 matches
+        const { data: cs2Matches } = await supabase
+          .from('cs2_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
         // Fetch other games matches
         const { data: otherMatches } = await supabase
           .from('game_match_telemetry')
@@ -178,6 +192,8 @@ export const VerifiedProfile = () => {
         const stats = {
           valorant: { hours: 0, slope: 0, matches: 0 },
           dota2: { hours: 0, slope: 0, matches: 0 },
+          league_of_legends: { hours: 0, slope: 0, matches: 0 },
+          lol: { hours: 0, slope: 0, matches: 0 },
           cs2: { hours: 0, slope: 0, matches: 0 },
           assettoCorsa: { hours: 0, slope: 0, matches: 0 },
           f1_25: { hours: 0, slope: 0, matches: 0 },
@@ -224,19 +240,20 @@ export const VerifiedProfile = () => {
           }, 0);
           const hours = totalSeconds / 3600;
 
-          const lcc = gameKey === 'dota2'
+          const lcc = (gameKey === 'dota2' || gameKey === 'league_of_legends' || gameKey === 'lol' || gameKey === 'cs2')
             ? calculateDotaLinearGrowth(filteredList)
             : calculateLCCMetrics(filteredList);
 
           stats[gameKey] = {
             hours: parseFloat(hours.toFixed(1)),
-            slope: gameKey === 'dota2' ? lcc.slope : lcc.slopeNumeric,
+            slope: (gameKey === 'dota2' || gameKey === 'league_of_legends' || gameKey === 'lol' || gameKey === 'cs2') ? lcc.slope : lcc.slopeNumeric,
             matches: count,
           };
         };
 
         processGameMatches(valMatches, 'valorant');
         processGameMatches(dotaMatches, 'dota2');
+        processGameMatches(lolMatches, 'league_of_legends');
 
         const matchesByGame = {};
         if (otherMatches) {
@@ -247,7 +264,7 @@ export const VerifiedProfile = () => {
           });
         }
 
-        processGameMatches(matchesByGame['Counter-Strike 2'], 'cs2');
+        processGameMatches(cs2Matches && cs2Matches.length > 0 ? cs2Matches : matchesByGame['Counter-Strike 2'], 'cs2');
         processGameMatches(matchesByGame['Assetto Corsa'], 'assettoCorsa');
         processGameMatches(matchesByGame['F1 25'], 'f1_25');
 

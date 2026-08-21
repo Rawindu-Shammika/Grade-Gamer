@@ -5,11 +5,14 @@ import { calculateLCCMetrics } from '../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
 import { syncDota2Account } from '../services/dotaSyncService';
+import { syncLolAccount } from '../services/lolSyncService';
+import { syncCs2Account } from '../services/cs2SyncService';
 import { getDotaHeroName } from '../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../utils/dotaStats';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
+  'League of Legends',
   'Counter-Strike 2',
   'Dota 2',
   'Apex Legends',
@@ -19,14 +22,11 @@ export const AUTOMATED_GAMES = [
 ];
 
 const getTelemetryTable = (gameKey) => {
-  const normalized = (gameKey || '').toLowerCase().trim();
-  if (normalized === 'dota2' || normalized === 'dota 2') {
-    return 'dota2_match_telemetry';
-  }
-  if (normalized === 'valorant') {
-    return 'valorant_match_telemetry';
-  }
-  return 'game_match_telemetry';
+  const g = (gameKey || '').toLowerCase();
+  if (g.includes('dota')) return 'dota2_match_telemetry';
+  if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
+  if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  return 'valorant_match_telemetry';
 };
 
 export const MANUAL_GAMES = [
@@ -45,7 +45,9 @@ const GAMEDATA_BANNERS = [
 
 export default function GameData() {
   const { user, profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
+  const registeredTitles = profile?.esports_titles?.length 
+    ? profile.esports_titles 
+    : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'];
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -83,12 +85,21 @@ export default function GameData() {
   const [dotaAccountId, setDotaAccountId] = useState('');
   const [isDotaBound, setIsDotaBound] = useState(false);
 
+  // League of Legends API state
+  const [lolRiotId, setLolRiotId] = useState('');
+  const [lolRegion, setLolRegion] = useState('sea');
+  const [isLolBound, setIsLolBound] = useState(false);
+
+  // Counter-Strike 2 API state
+  const [cs2SteamId, setCs2SteamId] = useState('');
+  const [isCs2Bound, setIsCs2Bound] = useState(false);
+
   useEffect(() => {
     const checkBoundProfile = async () => {
       if (!user?.id) return;
       const { data } = await supabase
         .from('profiles')
-        .select('valorant_ign, valorant_tag, steam_id')
+        .select('valorant_ign, valorant_tag, steam_id, lol_puuid, cs2_steam_id')
         .eq('id', user.id)
         .single();
 
@@ -100,6 +111,13 @@ export default function GameData() {
       if (data?.steam_id) {
         setDotaAccountId(data.steam_id);
         setIsDotaBound(true);
+      }
+      if (data?.cs2_steam_id || data?.steam_id) {
+        setCs2SteamId(data.cs2_steam_id || data.steam_id);
+        setIsCs2Bound(true);
+      }
+      if (data?.lol_puuid) {
+        setIsLolBound(true);
       }
     };
     checkBoundProfile();
@@ -205,9 +223,9 @@ export default function GameData() {
     return applyGlobalActReset(activeGameLogs, selectedGame, actInfo);
   }, [activeGameLogs, selectedGame, actInfo]);
 
-  // Compute LCC strictly using ACS via unified calculator on active cycle matches
+  // Compute LCC strictly using ACS/Performance scores via unified calculator on active cycle matches
   const lccResults = React.useMemo(() => {
-    if (selectedGame === 'Dota 2') {
+    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
       const dotaLcc = calculateDotaLinearGrowth(cycleMatches);
       const list = cycleMatches || [];
       const totalN = list.length;
@@ -237,8 +255,14 @@ export default function GameData() {
     if (selectedGame === 'Dota 2') {
       return payload.competitive_rank || 'UNRATED';
     }
+    if (selectedGame === 'League of Legends') {
+      return payload.competitive_rank || profile?.lol_rank || 'UNRATED';
+    }
+    if (selectedGame === 'Counter-Strike 2') {
+      return payload.competitive_rank || profile?.cs2_rank || 'GLOBAL ELITE';
+    }
     return payload.rank || 'UNRATED';
-  }, [cycleMatches, selectedGame]);
+  }, [cycleMatches, selectedGame, profile]);
 
   // 4. Ingestion Handler
   const handleIngestMatch = async (type) => {
@@ -395,6 +419,80 @@ export default function GameData() {
         show: true,
         type: 'error',
         message: err.message || 'Failed to ingest Dota 2 telemetry.'
+      });
+    } finally {
+      setIsSyncingTracker(false);
+    }
+  };
+
+  const handleSyncLolFromAPI = async () => {
+    if (!user?.id) {
+      showNotification({ show: true, type: 'error', message: 'Please sign in before syncing League of Legends match telemetry.' });
+      return;
+    }
+    if (!lolRiotId || !lolRiotId.includes('#')) {
+      showNotification({ show: true, type: 'error', message: 'Please enter a valid Riot ID (GameName#TagLine).' });
+      return;
+    }
+
+    setIsSyncingTracker(true);
+    try {
+      const data = await syncLolAccount(user.id, lolRiotId, lolRegion);
+
+      showNotification({
+        show: true,
+        type: 'success',
+        title: 'LEAGUE OF LEGENDS TELEMETRY INGESTED',
+        map: `${data.payload?.outcome || 'VICTORY'} (${data.payload?.champion_name || 'Champion'})`,
+        score: data.performanceScore,
+        acs: `${data.payload?.cs_per_min || 0} CS/M`,
+        kd: data.payload?.kda || 0.00
+      });
+
+      await fetchTelemetryHistory();
+      setIsLolBound(true);
+    } catch (err) {
+      showNotification({
+        show: true,
+        type: 'error',
+        message: err.message || 'Failed to ingest League of Legends telemetry.'
+      });
+    } finally {
+      setIsSyncingTracker(false);
+    }
+  };
+
+  const handleSyncCs2FromAPI = async () => {
+    if (!user?.id) {
+      showNotification({ show: true, type: 'error', message: 'Please sign in before syncing CS2 match telemetry.' });
+      return;
+    }
+    if (!cs2SteamId) {
+      showNotification({ show: true, type: 'error', message: 'Please enter your Steam ID or Steam Community ID.' });
+      return;
+    }
+
+    setIsSyncingTracker(true);
+    try {
+      const data = await syncCs2Account(user.id, cs2SteamId);
+
+      showNotification({
+        show: true,
+        type: 'success',
+        title: 'COUNTER-STRIKE 2 TELEMETRY INGESTED',
+        map: `${data.payload?.outcome || 'VICTORY'} (${data.payload?.map_name || data.payload?.map || 'de_mirage'})`,
+        score: data.performanceScore,
+        acs: `${data.payload?.adr || 0} ADR`,
+        kd: data.payload?.kd || 0.00
+      });
+
+      await fetchTelemetryHistory();
+      setIsCs2Bound(true);
+    } catch (err) {
+      showNotification({
+        show: true,
+        type: 'error',
+        message: err.message || 'Failed to ingest CS2 match telemetry.'
       });
     } finally {
       setIsSyncingTracker(false);
@@ -764,27 +862,90 @@ export default function GameData() {
                     )}
                   </>
                 ) : selectedGame === 'Counter-Strike 2' ? (
-                  <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
-                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-                      <div>
-                        <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                          Steam Web API Integration
+                  <>
+                    {/* --- COUNTER-STRIKE 2 ACCOUNT GATEWAY --- */}
+                    {isCs2Bound ? (
+                      /* BOUND / SYNCHRONIZED STATE */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          {/* Identity Badge */}
+                          <div className="flex items-center space-x-4">
+                            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xl font-black">
+                              🛡️
+                            </div>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-white font-black text-lg tracking-wide">
+                                  Steam Account ID
+                                </span>
+                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                                  {cs2SteamId}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                GradeGamer ID is synchronized with Counter-Strike 2 Steam Node.
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
+                                <span className="text-slate-500 uppercase font-bold">Standing:</span>
+                                <span className="text-amber-400 font-black uppercase">{latestRank}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Sync Trigger Button */}
+                          <button
+                            onClick={handleSyncCs2FromAPI}
+                            disabled={isSyncingTracker}
+                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
+                          >
+                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                          </button>
                         </div>
-                        <h3 className="text-sm font-black text-white uppercase tracking-wide">
-                          Link Steam Identity
-                        </h3>
                       </div>
-                      <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                        UNDER CONSTRUCTION
-                      </span>
-                    </div>
-                    <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
-                      <p className="text-xs font-mono text-slate-400">
-                        Direct API integration for {selectedGame} (Steam ID / Vanity URL live sync) is currently under construction.
-                        Aggregate Steam stats (K/D, HS%, ADR, Win Rate, Premier Tier) and Match Packet Streams will be available soon.
-                      </p>
-                    </div>
-                  </div>
+                    ) : (
+                      /* FIRST-TIME USER ONBOARDING */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                              Initial Setup
+                            </div>
+                            <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                              Link CS2 Steam Account
+                            </h3>
+                          </div>
+                          <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
+                            UNLINKED
+                          </span>
+                        </div>
+
+                        {/* COMPACT INPUT GRID */}
+                        <div className="grid grid-cols-1 gap-3 items-end pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Steam ID / SteamID64 / Friend ID
+                            </label>
+                            <input
+                              type="text"
+                              value={cs2SteamId}
+                              onChange={(e) => setCs2SteamId(e.target.value)}
+                              placeholder="e.g. 76561198000000000 or 104358896"
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        {/* BIND AND SYNC ACTION BUTTON */}
+                        <button
+                          onClick={handleSyncCs2FromAPI}
+                          disabled={isSyncingTracker}
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                        >
+                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC CS2 ACCOUNT'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </>
                 ) : selectedGame === 'Dota 2' ? (
                   <>
                     {/* --- DOTA 2 ACCOUNT GATEWAY --- */}
@@ -887,27 +1048,113 @@ export default function GameData() {
                     )}
                   </>
                 ) : selectedGame === 'League of Legends' ? (
-                  <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
-                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-                      <div>
-                        <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                          Riot API Integration
+                  <>
+                    {/* --- LEAGUE OF LEGENDS ACCOUNT GATEWAY --- */}
+                    {isLolBound ? (
+                      /* BOUND / SYNCHRONIZED STATE */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          {/* Identity Badge */}
+                          <div className="flex items-center space-x-4">
+                            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xl font-black">
+                              🛡️
+                            </div>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-white font-black text-lg tracking-wide">
+                                  {lolRiotId || 'Riot Account'}
+                                </span>
+                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                                  {lolRegion.toUpperCase()}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                GradeGamer ID is synchronized with Riot League of Legends node.
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
+                                <span className="text-slate-500 uppercase font-bold">Standing:</span>
+                                <span className={`uppercase ${
+                                  latestRank.startsWith('IMMORTAL') || latestRank.startsWith('CHALLENGER') || latestRank.startsWith('GRANDMASTER')
+                                    ? 'text-amber-400 font-black'
+                                    : latestRank.startsWith('DIVINE') || latestRank.startsWith('MASTER') || latestRank.startsWith('DIAMOND')
+                                    ? 'text-purple-400 font-bold'
+                                    : latestRank.startsWith('LEGEND') || latestRank.startsWith('PLATINUM') || latestRank.startsWith('EMERALD')
+                                    ? 'text-emerald-400 font-bold'
+                                    : 'text-cyan-400 font-bold'
+                                }`}>{latestRank}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Sync Trigger Button */}
+                          <button
+                            onClick={handleSyncLolFromAPI}
+                            disabled={isSyncingTracker}
+                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
+                          >
+                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                          </button>
                         </div>
-                        <h3 className="text-sm font-black text-white uppercase tracking-wide">
-                          Match ID Injection Node
-                        </h3>
                       </div>
-                      <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                        UNDER CONSTRUCTION
-                      </span>
-                    </div>
-                    <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
-                      <p className="text-xs font-mono text-slate-400">
-                        Direct API integration for {selectedGame} is currently under construction.
-                        GPM/XPM timeline curves, Vision Score, Ward efficiency, and Objective damage contribution analysis will be available soon.
-                      </p>
-                    </div>
-                  </div>
+                    ) : (
+                      /* FIRST-TIME USER ONBOARDING */
+                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                              Initial Setup
+                            </div>
+                            <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                              Link League of Legends Riot ID
+                            </h3>
+                          </div>
+                          <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
+                            UNLINKED
+                          </span>
+                        </div>
+
+                        {/* COMPACT INPUT GRID */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end pt-1">
+                          <div className="sm:col-span-2 space-y-1">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Riot ID (GameName#TagLine)
+                            </label>
+                            <input
+                              type="text"
+                              value={lolRiotId}
+                              onChange={(e) => setLolRiotId(e.target.value)}
+                              placeholder="e.g. Faker#KR1"
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Region
+                            </label>
+                            <select
+                              value={lolRegion}
+                              onChange={(e) => setLolRegion(e.target.value)}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg py-2 px-3 text-xs text-white focus:outline-none transition font-mono"
+                            >
+                              <option value="sea">SEA</option>
+                              <option value="americas">Americas</option>
+                              <option value="europe">Europe</option>
+                              <option value="asia">Asia</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* BIND AND SYNC ACTION BUTTON */}
+                        <button
+                          onClick={handleSyncLolFromAPI}
+                          disabled={isSyncingTracker}
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                        >
+                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC LEAGUE OF LEGENDS'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
                     <p className="text-xs font-mono text-slate-400">Direct API integration for {selectedGame} is currently under construction. Please use another title.</p>
@@ -1035,33 +1282,51 @@ export default function GameData() {
         ) : (
           <div className="space-y-3">
             {cycleMatches.map((log, idx) => {
-              if (selectedGame === 'Valorant' || selectedGame === 'Dota 2') {
+              if (selectedGame === 'Valorant' || selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
                 const isDota = selectedGame === 'Dota 2';
+                const isLol = selectedGame === 'League of Legends';
+                const isCs2 = selectedGame === 'Counter-Strike 2';
                 const roundsWon = log.metrics_payload?.rounds_won ?? log.rounds_won;
                 const roundsLost = log.metrics_payload?.rounds_lost ?? log.rounds_lost;
-                const formattedScore = isDota 
+                const formattedScore = (isDota || isLol || isCs2)
                   ? (log.metrics_payload?.outcome || 'VICTORY')
                   : (roundsWon !== undefined && roundsLost !== undefined) 
                     ? `${roundsWon} - ${roundsLost}` 
                     : (log.metrics_payload?.score_rounds || log.score || '13 - 10');
                 const mapName = isDota 
                   ? getDotaHeroName(log.metrics_payload?.hero_id)
-                  : (log.metrics_payload?.map || log.map || 'LOTUS');
+                  : isLol
+                    ? (log.metrics_payload?.champion_name || 'CHAMPION')
+                    : isCs2
+                    ? (log.metrics_payload?.map_name || log.metrics_payload?.map || 'de_mirage')
+                    : (log.metrics_payload?.map || log.map || 'LOTUS');
                 const agentName = isDota 
                   ? (log.metrics_payload?.team || 'Radiant')
-                  : (log.metrics_payload?.agent || log.agent || 'OMEN');
-                const kdVal = isDota 
-                  ? (log.metrics_payload?.kda || 1.0)
+                  : isLol
+                    ? (log.metrics_payload?.role || 'LANE')
+                    : isCs2
+                    ? 'Competitive'
+                    : (log.metrics_payload?.agent || log.agent || 'OMEN');
+                const kdVal = (isDota || isLol || isCs2)
+                  ? (log.metrics_payload?.kda || log.metrics_payload?.kd || 1.0)
                   : (log.metrics_payload?.kd || log.metrics_payload?.kd_ratio || log.kd || log.kd_ratio || 1.0);
                 const killsVal = log.metrics_payload?.kills || log.kills || 0;
                 const deathsVal = log.metrics_payload?.deaths || log.deaths || 0;
                 const assistsVal = log.metrics_payload?.assists || log.assists || 0;
                 const acsVal = isDota 
                   ? (log.metrics_payload?.gpm || 0)
-                  : (log.metrics_payload?.acs || log.acs || 210);
+                  : isLol
+                    ? (log.metrics_payload?.cs_per_min !== undefined ? `${log.metrics_payload.cs_per_min} CS/M` : (log.metrics_payload?.cs || 0))
+                    : isCs2
+                    ? (log.metrics_payload?.adr !== undefined ? `${log.metrics_payload.adr} ADR` : 100)
+                    : (log.metrics_payload?.acs || log.acs || 210);
                 const hsVal = isDota 
                   ? (log.metrics_payload?.xpm)
-                  : (log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent);
+                  : isLol
+                    ? (log.metrics_payload?.vision_score !== undefined ? `${log.metrics_payload.vision_score} VS` : undefined)
+                    : isCs2
+                    ? (log.metrics_payload?.hs_percent !== undefined ? `${log.metrics_payload.hs_percent}%` : (log.metrics_payload?.hs_percentage !== undefined ? `${log.metrics_payload.hs_percentage}%` : undefined))
+                    : (log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent);
                 const ratingVal = log.performance_score || log.calculated_rating || log.rating || 65.0;
                 const dateVal = new Date(log.created_at || log.match_date || Date.now()).toLocaleDateString();
                 const idVal = String(log.id || log.match_id || '');
@@ -1112,7 +1377,7 @@ export default function GameData() {
                         <div className={`text-xs sm:text-sm font-black ${Number(kdVal) >= 1 ? 'text-emerald-400' : 'text-slate-300'}`}>
                           {Number(kdVal).toFixed(2)}
                         </div>
-                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'KDA' : 'K/D'}</div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota || isLol ? 'KDA' : 'K/D'}</div>
                       </div>
 
                       {/* KDA */}
@@ -1128,16 +1393,16 @@ export default function GameData() {
                         <div className="text-xs sm:text-sm font-black text-white">
                           {acsVal}
                         </div>
-                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'GPM' : 'ACS'}</div>
+                        <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'GPM' : isLol ? 'CS RATE' : isCs2 ? 'ADR' : 'ACS'}</div>
                       </div>
 
-                      {/* HS% */}
+                      {/* HS% / Vision */}
                       {hsVal !== undefined && (
                         <div className="text-center hidden md:block">
                           <div className="text-xs sm:text-sm font-bold text-emerald-400">
-                            {isDota ? `${hsVal} XP` : `${hsVal}%`}
+                            {isDota ? `${hsVal} XP` : isLol ? hsVal : `${hsVal}%`}
                           </div>
-                          <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'XPM' : 'HS%'}</div>
+                          <div className="text-[9px] text-slate-500 tracking-wider">{isDota ? 'XPM' : isLol ? 'VISION' : 'HS%'}</div>
                         </div>
                       )}
 

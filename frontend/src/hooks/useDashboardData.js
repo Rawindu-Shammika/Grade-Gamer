@@ -9,13 +9,11 @@ import { supabase } from '../services/supabaseClient';
  * - Tracks user's player profile with automatic database sync and local auth metadata fallback.
  */
 const getTelemetryTable = (gameKey) => {
-  const normalized = (gameKey || '').toLowerCase().trim();
-  if (normalized === 'dota2' || normalized === 'dota 2') {
-    return 'dota2_match_telemetry';
-  }
-  if (normalized === 'valorant') {
-    return 'valorant_match_telemetry';
-  }
+  const g = (gameKey || '').toLowerCase();
+  if (g.includes('dota')) return 'dota2_match_telemetry';
+  if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
+  if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  if (g === 'valorant') return 'valorant_match_telemetry';
   return 'matches';
 };
 
@@ -44,7 +42,7 @@ export const useDashboardData = (session, activeSelectedGame) => {
     if (!userId || !activeSelectedGame) return;
     try {
       const tableName = getTelemetryTable(activeSelectedGame);
-      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry';
+      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry' || tableName === 'lol_match_telemetry' || tableName === 'cs2_match_telemetry';
       const orderByCol = isCustomTable ? 'created_at' : 'match_timestamp';
 
       const { data, error } = await supabase
@@ -159,7 +157,7 @@ export const useDashboardData = (session, activeSelectedGame) => {
     if (!userId || !activeSelectedGame) return;
     try {
       const tableName = getTelemetryTable(activeSelectedGame);
-      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry';
+      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry' || tableName === 'lol_match_telemetry' || tableName === 'cs2_match_telemetry';
       const timeColumn = isCustomTable ? 'created_at' : 'match_timestamp';
 
       const payload = {

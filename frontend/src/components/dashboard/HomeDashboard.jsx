@@ -139,19 +139,18 @@ const getRankTheme = (tierName) => {
 };
 
 const getTelemetryTable = (gameKey) => {
-  const normalized = (gameKey || '').toLowerCase().trim();
-  if (normalized === 'dota2' || normalized === 'dota 2') {
-    return 'dota2_match_telemetry';
-  }
-  if (normalized === 'valorant') {
-    return 'valorant_match_telemetry';
-  }
-  return 'game_match_telemetry';
+  const g = (gameKey || '').toLowerCase();
+  if (g.includes('dota')) return 'dota2_match_telemetry';
+  if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
+  if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  return 'valorant_match_telemetry';
 };
 
 export const HomeDashboard = () => {
   const { user, profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
+  const registeredTitles = profile?.esports_titles?.length 
+    ? profile.esports_titles 
+    : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'];
 
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [actInfo, setActInfo] = useState(null);
@@ -294,13 +293,17 @@ export const HomeDashboard = () => {
         // Fetch profile handle
         const { data: profile } = await supabase
           .from('profiles')
-          .select('valorant_ign, valorant_tag, steam_id')
+          .select('valorant_ign, valorant_tag, steam_id, lol_puuid, lol_rank, cs2_steam_id, cs2_rank')
           .eq('id', user.id)
           .maybeSingle();
 
         if (isMounted) {
           if (selectedGame === 'Dota 2' && profile?.steam_id) {
             setBoundHandle(`STEAM ID: ${profile.steam_id}`);
+          } else if (selectedGame === 'Counter-Strike 2' && (profile?.cs2_steam_id || profile?.steam_id)) {
+            setBoundHandle(`STEAM ID: ${profile.cs2_steam_id || profile.steam_id}`);
+          } else if (selectedGame === 'League of Legends' && profile?.lol_puuid) {
+            setBoundHandle(`RIOT PUUID: ${profile.lol_puuid.slice(0, 10)}...`);
           } else if (profile?.valorant_ign) {
             setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
           } else {
@@ -369,6 +372,12 @@ export const HomeDashboard = () => {
     if (selectedGame === 'Dota 2') {
       return payload?.competitive_rank || profile?.dota2_rank || 'UNRATED';
     }
+    if (selectedGame === 'League of Legends') {
+      return payload?.competitive_rank || profile?.lol_rank || 'UNRATED';
+    }
+    if (selectedGame === 'Counter-Strike 2') {
+      return payload?.competitive_rank || profile?.cs2_rank || 'GLOBAL ELITE';
+    }
     return payload?.rank || 'UNRATED';
   }, [selectedGame, payload, profile]);
 
@@ -380,7 +389,7 @@ export const HomeDashboard = () => {
 
   const dashLCC = React.useMemo(() => {
     const list = [...(activeDashboardMatches || [])].reverse();
-    if (selectedGame === 'Dota 2') {
+    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
       const dotaLcc = calculateDotaLinearGrowth(list);
       return {
         slopeNumeric: dotaLcc.slope,
@@ -432,6 +441,8 @@ export const HomeDashboard = () => {
       const ratingVal = match.performance_score || match.calculated_rating || match.rating || 50;
       const mapName = selectedGame === 'Dota 2'
         ? getDotaHeroName(match.metrics_payload?.hero_id)
+        : selectedGame === 'League of Legends'
+        ? (match.metrics_payload?.champion_name || 'CHAMPION')
         : (match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH');
       let kdVal = '1.00';
       const pl = match.metrics_payload || {};
@@ -877,7 +888,7 @@ export const HomeDashboard = () => {
                   </div>
                   <div className="text-right font-mono">
                     <div className="text-xs font-bold text-slate-200">
-                      {selectedGame === 'Dota 2' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
+                      {selectedGame === 'Dota 2' || selectedGame === 'League of Legends' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
                     </div>
                     <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
                   </div>
