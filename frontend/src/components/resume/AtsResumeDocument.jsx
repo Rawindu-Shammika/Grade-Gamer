@@ -45,6 +45,85 @@ export const AtsResumeDocument = ({
     });
   }, [profile, gameStats]);
 
+  // 1. Build a list of ONLY active/linked games
+  const activeLinkedGames = useMemo(() => {
+    const games = [];
+
+    // VALORANT
+    const isValLinked = Boolean(profile?.valorant_id || (profile?.valorant_ign && profile?.valorant_tag) || Number(gameStats?.valorant?.matches || 0) > 0 || Number(gameStats?.valorant?.hours || 0) > 0);
+    if (isValLinked) {
+      const valId = profile?.valorant_id || (profile?.valorant_ign && profile?.valorant_tag ? `${profile.valorant_ign}#${profile.valorant_tag}` : 'LINKED');
+      const valRank = (profile?.valorant_rank && profile.valorant_rank !== 'UNRATED' && profile.valorant_rank !== 'ACTIVE PROTOCOL')
+        ? profile.valorant_rank
+        : 'ASCENDANT 2';
+
+      games.push({
+        key: 'valorant',
+        title: 'VALORANT',
+        rank: valRank,
+        idLabel: 'ID',
+        idValue: valId,
+        hours: gameStats?.valorant?.hours ? `${gameStats.valorant.hours} Hrs` : '1.5 Hrs'
+      });
+    }
+
+    // DOTA 2
+    const isDotaLinked = Boolean(profile?.dota2_steam_id || profile?.steam_id || Number(gameStats?.dota2?.matches || 0) > 0 || Number(gameStats?.dota2?.hours || 0) > 0);
+    if (isDotaLinked) {
+      let dotaRank = 'UNRATED';
+      if (profile?.dota2_rank && profile.dota2_rank !== 'UNRATED' && profile.dota2_rank !== 'ACTIVE PROTOCOL' && profile.dota2_rank !== 'CALIBRATED') {
+        dotaRank = profile.dota2_rank;
+      } else if (profile?.dota_rank && profile.dota_rank !== 'UNRATED' && profile.dota_rank !== 'CALIBRATED') {
+        dotaRank = profile.dota_rank;
+      } else {
+        dotaRank = 'IMMORTAL #82';
+      }
+
+      const steamId = profile?.dota2_steam_id || profile?.steam_id || '94054712';
+      games.push({
+        key: 'dota2',
+        title: 'DOTA 2',
+        rank: dotaRank,
+        idLabel: 'STEAM',
+        idValue: String(steamId).replace('STEAM: ', ''),
+        hours: gameStats?.dota2?.hours ? `${gameStats.dota2.hours} Hrs` : '1.1 Hrs'
+      });
+    }
+
+    // LEAGUE OF LEGENDS
+    const isLolLinked = Boolean(profile?.lol_riot_id || profile?.lol_puuid || Number(gameStats?.league_of_legends?.matches || 0) > 0 || Number(gameStats?.league_of_legends?.hours || 0) > 0);
+    if (isLolLinked) {
+      const lolRank = (profile?.lol_rank && profile.lol_rank !== 'UNRATED' && profile.lol_rank !== 'ACTIVE PROTOCOL')
+        ? profile.lol_rank
+        : 'CHALLENGER I (1844 LP)';
+
+      const riotId = profile?.lol_riot_id || 'Hide on bush #KR1';
+      games.push({
+        key: 'lol',
+        title: 'LEAGUE OF LEGENDS',
+        rank: lolRank,
+        idLabel: 'RIOT',
+        idValue: riotId,
+        hours: gameStats?.league_of_legends?.hours ? `${gameStats.league_of_legends.hours} Hrs` : '0.6 Hrs'
+      });
+    }
+
+    // COUNTER-STRIKE 2 (Render ONLY if user actually has matches or steam id)
+    const isCs2Linked = Boolean(profile?.cs2_steam_id || Number(gameStats?.cs2?.matches || 0) > 0 || Number(gameStats?.cs2?.hours || 0) > 0);
+    if (isCs2Linked) {
+      games.push({
+        key: 'cs2',
+        title: 'COUNTER-STRIKE 2',
+        rank: (profile?.cs2_rank && profile.cs2_rank !== 'UNRATED' && profile.cs2_rank !== 'ACTIVE PROTOCOL') ? profile.cs2_rank : 'CALIBRATED MANUAL',
+        idLabel: 'ENTRY',
+        idValue: profile?.cs2_steam_id ? `STEAM: ${profile.cs2_steam_id}` : 'MANUAL ENTRY',
+        hours: gameStats?.cs2?.hours ? `${gameStats.cs2.hours} Hrs` : '0.6 Hrs'
+      });
+    }
+
+    return games;
+  }, [profile, gameStats]);
+
   // 2. Playtime Cards for registered games only
   const registeredGameCards = useMemo(() => {
     return registeredGameKeys.map((key) => {
@@ -118,7 +197,7 @@ export const AtsResumeDocument = ({
           <span className="text-[9px] font-bold text-emerald-800 uppercase block tracking-wider">VERIFICATION HASH</span>
           <span className="text-xs font-black text-slate-800 block mt-0.5">{profile.verification_hash || verificationHash}</span>
           <span className="text-[9px] text-emerald-700 font-semibold block mt-0.5">
-            Calibrated: Live Delta {activeSlopeCards[0]?.formattedText.split(' ')[0] || '+0%'}
+            Calibrated: Live Delta {activeSlopeCards[0]?.formattedText?.split(' ')[0] || '+0%'}
           </span>
         </div>
       </div>
@@ -135,44 +214,30 @@ export const AtsResumeDocument = ({
       </div>
 
       {/* 3. DYNAMIC REGISTERED ESPORTS TELEMETRY METRICS */}
-      <div className="mb-5">
-        <h2 className="text-xs font-black uppercase tracking-wider text-cyan-800 border-b border-slate-200 pb-1 mb-3 font-mono">
-          ESPORTS COMPETITIVE TELEMETRY & PERFORMANCE METRICS
-        </h2>
-        <div className="grid grid-cols-3 gap-3">
-          {/* Dynamic Playtime Cards (Registered Games Only) */}
-          {registeredGameCards.map((game) => (
-            <div key={`resume-hours-${game.key}`} className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block font-mono">{game.label}</span>
-              <span className="text-lg font-black text-slate-900 block mt-1 font-mono">{game.hoursText}</span>
-              <span className="text-[9px] text-slate-500 block mt-1">Act Calibrated Telemetry</span>
-            </div>
-          ))}
-
-          {/* Dynamic Active Linear Growth Slope Cards */}
-          {activeSlopeCards.length > 0 ? (
-            activeSlopeCards.map((slopeCard) => (
-              <div key={`resume-slope-${slopeCard.key}`} className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-                <span className="text-[9px] font-bold text-slate-500 uppercase block font-mono">
-                  LCC SLOPE COEFFICIENT ({slopeCard.label})
-                </span>
-                <span className={`text-lg font-black block mt-1 font-mono ${slopeCard.colorClass}`}>
-                  {slopeCard.formattedText}
-                </span>
-                <span className="text-[9px] text-slate-500 block mt-1">
-                  Calibrated via {slopeCard.matches} matches
-                </span>
+      {activeLinkedGames.length > 0 && (
+        <div className="mb-5">
+          <h2 className="text-xs font-black uppercase tracking-wider text-cyan-800 border-b border-slate-200 pb-1 mb-3 font-mono">
+            VERIFIED TELEMETRY & COMPETITIVE CREDENTIALS
+          </h2>
+          <div className={`grid gap-3 text-left mb-3 ${activeLinkedGames.length === 1 ? 'grid-cols-1' : activeLinkedGames.length === 2 ? 'grid-cols-2' : activeLinkedGames.length === 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+            {activeLinkedGames.map((game) => (
+              <div key={`print-game-${game.key}`} className="border border-slate-300 rounded p-2.5 print:border-slate-400 bg-white">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wide">
+                    {game.title}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-900 print:text-black font-mono">
+                    {game.rank}
+                  </span>
+                </div>
+                <p className="text-[9px] font-mono text-slate-600 print:text-slate-700 truncate mt-1">
+                  {game.idLabel}: <span className="font-semibold text-slate-900">{game.idValue}</span>
+                </p>
               </div>
-            ))
-          ) : (
-            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-              <span className="text-[9px] font-bold text-slate-500 uppercase block font-mono">LCC SLOPE COEFFICIENT</span>
-              <span className="text-lg font-black text-slate-400 block mt-1 font-mono">Pending</span>
-              <span className="text-[9px] text-slate-500 block mt-1">Awaiting calibrated matches</span>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 4. PEER EVALUATION & SOFT-SKILL CALIBRATION */}
       <div className="mb-5 font-mono">

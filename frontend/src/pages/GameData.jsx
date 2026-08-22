@@ -6,7 +6,6 @@ import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
 import { syncDota2Account } from '../services/dotaSyncService';
 import { syncLolAccount } from '../services/lolSyncService';
-import { syncCs2Account } from '../services/cs2SyncService';
 import { getDotaHeroName } from '../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../utils/dotaStats';
 
@@ -45,15 +44,40 @@ const GAMEDATA_BANNERS = [
 
 export default function GameData() {
   const { user, profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length 
-    ? profile.esports_titles 
-    : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'];
+  const [activeTitles, setActiveTitles] = useState(() => (
+    profile?.esports_titles?.length 
+      ? profile.esports_titles 
+      : (profile?.active_titles?.length ? profile.active_titles : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'])
+  ));
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
 
   const [actInfo, setActInfo] = useState(null);
+
+  useEffect(() => {
+    if (profile?.esports_titles?.length) {
+      setActiveTitles(profile.esports_titles);
+    } else if (profile?.active_titles?.length) {
+      setActiveTitles(profile.active_titles);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    const handleTitlesSync = (e) => {
+      const updated = e.detail?.activeTitles || e.detail?.esports_titles;
+      if (updated && Array.isArray(updated) && updated.length > 0) {
+        setActiveTitles(updated);
+        if (selectedGame && !updated.includes(selectedGame)) {
+          setSelectedGame(updated[0]);
+        }
+      }
+    };
+
+    window.addEventListener('gg_titles_updated', handleTitlesSync);
+    return () => window.removeEventListener('gg_titles_updated', handleTitlesSync);
+  }, [selectedGame]);
 
   useEffect(() => {
     if (String(selectedGame || '').toLowerCase().includes('val')) {
@@ -90,34 +114,123 @@ export default function GameData() {
   const [lolRegion, setLolRegion] = useState('sea');
   const [isLolBound, setIsLolBound] = useState(false);
 
-  // Counter-Strike 2 API state
-  const [cs2SteamId, setCs2SteamId] = useState('');
-  const [isCs2Bound, setIsCs2Bound] = useState(false);
+  // Counter-Strike 2 Manual Telemetry Form state
+  const [cs2Form, setCs2Form] = useState({
+    map: 'DE_MIRAGE',
+    outcome: 'VICTORY',
+    rank: 'PREMIER (15,000 - 19,999)',
+    kills: '',
+    deaths: '',
+    assists: '',
+    adr: '',
+    hsPercent: ''
+  });
+
+  // Unlink Modal State
+  const [showUnlinkModal, setShowUnlinkModal] = useState(false);
+
+  // Full User Profile State & Helper
+  const [userProfile, setUserProfile] = useState(null);
+
+  const isValorantLinked = Boolean(
+    isBound || 
+    userProfile?.valorant_id || 
+    (userProfile?.valorant_ign && userProfile?.valorant_tag) ||
+    (selectedGame === 'Valorant' && matchHistory && matchHistory.length > 0)
+  );
+
+  const isDotaLinked = Boolean(
+    isDotaBound || 
+    userProfile?.dota2_steam_id || 
+    userProfile?.steam_id || 
+    (selectedGame === 'Dota 2' && matchHistory && matchHistory.length > 0)
+  );
+
+  const isLolLinked = Boolean(
+    isLolBound || 
+    userProfile?.lol_riot_id || 
+    userProfile?.lol_puuid || 
+    (selectedGame === 'League of Legends' && matchHistory && matchHistory.length > 0)
+  );
+
+  const resolvedLolHandle = lolRiotId || userProfile?.lol_riot_id || (matchHistory && matchHistory[0]?.metrics_payload?.riot_id) || (matchHistory && matchHistory[0]?.metrics_payload?.game_name ? `${matchHistory[0].metrics_payload.game_name}#${matchHistory[0].metrics_payload.tag_line}` : 'CONNECTED');
+
+  const resolvedDotaHandle = dotaAccountId || userProfile?.dota2_steam_id || userProfile?.steam_id || (matchHistory && matchHistory[0]?.metrics_payload?.account_id) || 'CONNECTED';
+
+  const resolvedValorantHandle = trackerGamerTag || userProfile?.valorant_ign || (userProfile?.valorant_id ? userProfile.valorant_id.split('#')[0] : (matchHistory && matchHistory[0]?.metrics_payload?.game_name) || 'CONNECTED');
+  const resolvedValorantTag = trackerTagLine || userProfile?.valorant_tag || (userProfile?.valorant_id && userProfile.valorant_id.includes('#') ? userProfile.valorant_id.split('#')[1] : (matchHistory && matchHistory[0]?.metrics_payload?.tag_line) || '');
+
+  const getIsLinked = (gameKey) => {
+    const key = (gameKey || '').toLowerCase();
+    if (key.includes('val')) return isValorantLinked;
+    if (key.includes('dota')) return isDotaLinked;
+    if (key.includes('lol') || key.includes('league')) return isLolLinked;
+    if (key.includes('cs') || key.includes('counter')) return Boolean(userProfile?.cs2_steam_id || userProfile?.steam_id);
+    return false;
+  };
 
   useEffect(() => {
     const checkBoundProfile = async () => {
       if (!user?.id) return;
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
-        .select('valorant_ign, valorant_tag, steam_id, lol_puuid, cs2_steam_id')
+        .select('*')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (data?.valorant_ign && data?.valorant_tag) {
-        setTrackerGamerTag(data.valorant_ign);
-        setTrackerTagLine(data.valorant_tag);
-        setIsBound(true);
-      }
-      if (data?.steam_id) {
-        setDotaAccountId(data.steam_id);
-        setIsDotaBound(true);
-      }
-      if (data?.cs2_steam_id || data?.steam_id) {
-        setCs2SteamId(data.cs2_steam_id || data.steam_id);
-        setIsCs2Bound(true);
-      }
-      if (data?.lol_puuid) {
-        setIsLolBound(true);
+      if (!error && data) {
+        setUserProfile(data);
+
+        // Valorant check
+        if (data.valorant_id) {
+          if (data.valorant_id.includes('#')) {
+            const [name, tag] = data.valorant_id.split('#');
+            setTrackerGamerTag(name);
+            setTrackerTagLine(tag);
+          } else {
+            setTrackerGamerTag(data.valorant_id);
+            setTrackerTagLine('');
+          }
+          setIsBound(true);
+        } else if (data.valorant_ign && data.valorant_tag) {
+          setTrackerGamerTag(data.valorant_ign);
+          setTrackerTagLine(data.valorant_tag);
+          setIsBound(true);
+        } else {
+          setIsBound(false);
+          setTrackerGamerTag('');
+          setTrackerTagLine('');
+        }
+
+        // Dota 2 check
+        if (data.dota2_steam_id || data.steam_id) {
+          setDotaAccountId(data.dota2_steam_id || data.steam_id);
+          setIsDotaBound(true);
+        } else {
+          setIsDotaBound(false);
+          setDotaAccountId('');
+        }
+
+        // CS2 check
+        if (data.cs2_steam_id || data.steam_id) {
+          setCs2SteamId(data.cs2_steam_id || data.steam_id);
+          setIsCs2Bound(true);
+        } else {
+          setIsCs2Bound(false);
+          setCs2SteamId('');
+        }
+
+        // LoL check
+        if (data.lol_riot_id || data.lol_puuid) {
+          setLolRiotId(data.lol_riot_id || '');
+          if (data.lol_region) {
+            setLolRegion(data.lol_region.toLowerCase());
+          }
+          setIsLolBound(true);
+        } else {
+          setIsLolBound(false);
+          setLolRiotId('');
+        }
       }
     };
     checkBoundProfile();
@@ -155,10 +268,10 @@ export default function GameData() {
 
   // 1. Synchronize Registered Titles
   useEffect(() => {
-    if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
-      setSelectedGame(registeredTitles[0]);
+    if (activeTitles.length > 0 && !activeTitles.includes(selectedGame)) {
+      setSelectedGame(activeTitles[0]);
     }
-  }, [registeredTitles, selectedGame]);
+  }, [activeTitles, selectedGame]);
 
   const fetchTelemetryHistory = async () => {
     if (!user?.id) return;
@@ -249,20 +362,25 @@ export default function GameData() {
   }, [cycleMatches, selectedGame]);
 
   const latestRank = React.useMemo(() => {
-    if (cycleMatches.length === 0) return 'UNRATED';
+    if (cycleMatches.length === 0) {
+      if (selectedGame === 'League of Legends') return userProfile?.lol_rank || profile?.lol_rank || 'UNRATED';
+      if (selectedGame === 'Dota 2') return userProfile?.dota2_rank || profile?.dota2_rank || 'UNRATED';
+      if (selectedGame === 'Counter-Strike 2') return userProfile?.cs2_rank || profile?.cs2_rank || 'PREMIER (15,000 - 19,999)';
+      return 'UNRATED';
+    }
     const latest = cycleMatches[cycleMatches.length - 1];
     const payload = latest?.metrics_payload || latest || {};
     if (selectedGame === 'Dota 2') {
-      return payload.competitive_rank || 'UNRATED';
+      return payload.competitive_rank || userProfile?.dota2_rank || profile?.dota2_rank || 'UNRATED';
     }
     if (selectedGame === 'League of Legends') {
-      return payload.competitive_rank || profile?.lol_rank || 'UNRATED';
+      return payload.competitive_rank || userProfile?.lol_rank || profile?.lol_rank || 'UNRATED';
     }
     if (selectedGame === 'Counter-Strike 2') {
-      return payload.competitive_rank || profile?.cs2_rank || 'GLOBAL ELITE';
+      return payload.competitive_rank || userProfile?.cs2_rank || profile?.cs2_rank || 'GLOBAL ELITE';
     }
     return payload.rank || 'UNRATED';
-  }, [cycleMatches, selectedGame, profile]);
+  }, [cycleMatches, selectedGame, profile, userProfile]);
 
   // 4. Ingestion Handler
   const handleIngestMatch = async (type) => {
@@ -339,7 +457,22 @@ export default function GameData() {
       showNotification({ show: true, type: 'error', message: 'Please sign in before syncing match telemetry.' });
       return;
     }
-    if (!trackerGamerTag || !trackerTagLine) {
+
+    let targetGamerTag = trackerGamerTag?.trim();
+    let targetTagLine = trackerTagLine?.trim();
+
+    if (!targetGamerTag || !targetTagLine) {
+      if (userProfile?.valorant_id && userProfile.valorant_id.includes('#')) {
+        const parts = userProfile.valorant_id.split('#');
+        targetGamerTag = parts[0].trim();
+        targetTagLine = parts.slice(1).join('#').trim();
+      } else if (userProfile?.valorant_ign && userProfile?.valorant_tag) {
+        targetGamerTag = userProfile.valorant_ign.trim();
+        targetTagLine = userProfile.valorant_tag.trim();
+      }
+    }
+
+    if (!targetGamerTag || !targetTagLine) {
       showNotification({ show: true, type: 'error', message: 'Please enter both Riot ID and Tagline.' });
       return;
     }
@@ -352,8 +485,8 @@ export default function GameData() {
         body: JSON.stringify({
           userId: user.id,
           gameTitle: selectedGame,
-          gamerTag: trackerGamerTag.trim(),
-          tagLine: trackerTagLine.trim(),
+          gamerTag: targetGamerTag,
+          tagLine: targetTagLine,
           region: 'ap' // Default Asia-Pacific
         })
       });
@@ -375,6 +508,13 @@ export default function GameData() {
         kd: data.payload?.kd
       });
 
+      setUserProfile(prev => ({
+        ...prev,
+        valorant_ign: targetGamerTag,
+        valorant_tag: targetTagLine,
+        valorant_id: `${targetGamerTag}#${targetTagLine}`
+      }));
+
       await fetchTelemetryHistory();
     } catch (err) {
       showNotification({
@@ -392,14 +532,17 @@ export default function GameData() {
       showNotification({ show: true, type: 'error', message: 'Please sign in before syncing Dota 2 match telemetry.' });
       return;
     }
-    if (!dotaAccountId) {
+
+    let targetAccountId = dotaAccountId?.trim() || userProfile?.dota2_steam_id || userProfile?.steam_id;
+
+    if (!targetAccountId) {
       showNotification({ show: true, type: 'error', message: 'Please enter your 32-bit Steam Account ID.' });
       return;
     }
 
     setIsSyncingTracker(true);
     try {
-      const data = await syncDota2Account(user.id, dotaAccountId);
+      const data = await syncDota2Account(user.id, targetAccountId);
 
       // Trigger Custom Ingestion Notification
       showNotification({
@@ -411,6 +554,13 @@ export default function GameData() {
         acs: `${data.payload?.gpm || 0} GPM`,
         kd: data.payload?.kda || 0.00
       });
+
+      setUserProfile(prev => ({
+        ...prev,
+        dota2_steam_id: targetAccountId,
+        steam_id: targetAccountId,
+        dota2_rank: data.payload?.competitive_rank || 'UNRATED'
+      }));
 
       await fetchTelemetryHistory();
       setIsDotaBound(true);
@@ -430,14 +580,25 @@ export default function GameData() {
       showNotification({ show: true, type: 'error', message: 'Please sign in before syncing League of Legends match telemetry.' });
       return;
     }
-    if (!lolRiotId || !lolRiotId.includes('#')) {
+
+    // Resolve Riot ID from input state OR fall back to existing userProfile
+    let targetRiotId = lolRiotId?.trim();
+    if (!targetRiotId || !targetRiotId.includes('#')) {
+      if (userProfile?.lol_riot_id && userProfile.lol_riot_id.includes('#')) {
+        targetRiotId = userProfile.lol_riot_id.trim();
+      }
+    }
+
+    if (!targetRiotId || !targetRiotId.includes('#')) {
       showNotification({ show: true, type: 'error', message: 'Please enter a valid Riot ID (GameName#TagLine).' });
       return;
     }
 
+    const targetRegion = userProfile?.lol_region || lolRegion || 'ASIA';
+
     setIsSyncingTracker(true);
     try {
-      const data = await syncLolAccount(user.id, lolRiotId, lolRegion);
+      const data = await syncLolAccount(user.id, targetRiotId, targetRegion.toLowerCase());
 
       showNotification({
         show: true,
@@ -448,6 +609,14 @@ export default function GameData() {
         acs: `${data.payload?.cs_per_min || 0} CS/M`,
         kd: data.payload?.kda || 0.00
       });
+
+      setUserProfile(prev => ({
+        ...prev,
+        lol_riot_id: data.riotId || targetRiotId,
+        lol_puuid: data.payload?.puuid || data.puuid,
+        lol_rank: data.rank || data.payload?.competitive_rank || 'UNRATED',
+        lol_region: data.region || targetRegion.toUpperCase()
+      }));
 
       await fetchTelemetryHistory();
       setIsLolBound(true);
@@ -462,37 +631,140 @@ export default function GameData() {
     }
   };
 
-  const handleSyncCs2FromAPI = async () => {
+  const handleManualCs2Submit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!user?.id) {
-      showNotification({ show: true, type: 'error', message: 'Please sign in before syncing CS2 match telemetry.' });
+      showNotification({ show: true, type: 'error', message: 'Please sign in before recording CS2 match telemetry.' });
       return;
     }
-    if (!cs2SteamId) {
-      showNotification({ show: true, type: 'error', message: 'Please enter your Steam ID or Steam Community ID.' });
-      return;
-    }
-
-    setIsSyncingTracker(true);
+    setIsSubmitting(true);
     try {
-      const data = await syncCs2Account(user.id, cs2SteamId);
+      const res = await fetch('http://localhost:5000/api/manual-entry-cs2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          ...cs2Form
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to record match.');
 
       showNotification({
         show: true,
         type: 'success',
         title: 'COUNTER-STRIKE 2 TELEMETRY INGESTED',
-        map: `${data.payload?.outcome || 'VICTORY'} (${data.payload?.map_name || data.payload?.map || 'de_mirage'})`,
+        map: `${data.payload?.outcome || 'VICTORY'} (${data.payload?.map || 'DE_MIRAGE'})`,
         score: data.performanceScore,
         acs: `${data.payload?.adr || 0} ADR`,
         kd: data.payload?.kd || 0.00
       });
 
+      setUserProfile(prev => ({
+        ...prev,
+        cs2_rank: data.rank || cs2Form.rank
+      }));
+
+      // Reset Form
+      setCs2Form({
+        map: 'DE_MIRAGE',
+        outcome: 'VICTORY',
+        rank: cs2Form.rank || 'PREMIER (15,000 - 19,999)',
+        kills: '',
+        deaths: '',
+        assists: '',
+        adr: '',
+        hsPercent: ''
+      });
+
       await fetchTelemetryHistory();
-      setIsCs2Bound(true);
+    } catch (err) {
+      console.error('[CS2 Entry UI Error]:', err.message);
+      showNotification({
+        show: true,
+        type: 'error',
+        message: err.message || 'Failed to record CS2 match.'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmUnlink = async () => {
+    if (!user?.id) return;
+    try {
+      setIsSyncingTracker(true);
+      setShowUnlinkModal(false);
+
+      const res = await fetch('http://localhost:5000/api/unlink-game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          gameKey: selectedGame
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unlink failed');
+
+      // Reset specific game states
+      const key = (selectedGame || '').toLowerCase();
+      if (key.includes('lol') || key.includes('league')) {
+        setIsLolBound(false);
+        setLolRiotId('');
+      } else if (key.includes('dota')) {
+        setIsDotaBound(false);
+        setDotaAccountId('');
+      } else if (key.includes('cs') || key.includes('counter-strike')) {
+        setIsCs2Bound(false);
+      } else {
+        setIsBound(false);
+        setTrackerGamerTag('');
+        setTrackerTagLine('');
+      }
+
+      // CRITICAL: Immediately update local userProfile state to trigger instant UI re-render
+      setUserProfile((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev };
+
+        if (key.includes('lol') || key.includes('league')) {
+          updated.lol_riot_id = null;
+          updated.lol_puuid = null;
+          updated.lol_rank = 'UNRATED';
+        } else if (key.includes('dota')) {
+          updated.dota2_steam_id = null;
+          updated.steam_id = null;
+          updated.dota2_rank = 'UNRATED';
+        } else if (key.includes('cs') || key.includes('counter')) {
+          updated.cs2_steam_id = null;
+          updated.cs2_rank = 'UNRATED';
+        } else {
+          updated.valorant_id = null;
+          updated.valorant_ign = null;
+          updated.valorant_tag = null;
+          updated.valorant_rank = 'UNRATED';
+        }
+
+        return updated;
+      });
+
+      setMatchHistory([]);
+      showNotification({
+        show: true,
+        type: 'success',
+        title: `${selectedGame.toUpperCase()} UNLINKED`,
+        message: `${selectedGame} successfully disconnected and telemetry purged.`
+      });
+
+      await fetchTelemetryHistory();
     } catch (err) {
       showNotification({
         show: true,
         type: 'error',
-        message: err.message || 'Failed to ingest CS2 match telemetry.'
+        message: err.message || 'Error disconnecting account.'
       });
     } finally {
       setIsSyncingTracker(false);
@@ -572,11 +844,17 @@ export default function GameData() {
             onChange={(e) => setSelectedGame(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
-            {registeredTitles.map((title) => (
-              <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
-                {title.toUpperCase()}
+            {activeTitles && activeTitles.length > 0 ? (
+              activeTitles.map((title) => (
+                <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
+                  {title.toUpperCase()}
+                </option>
+              ))
+            ) : (
+              <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">
+                VALORANT
               </option>
-            ))}
+            )}
           </select>
 
           {/* Dropdown Chevron */}
@@ -758,7 +1036,7 @@ export default function GameData() {
                 {selectedGame === 'Valorant' ? (
                   <>
                     {/* --- VALORANT ACCOUNT GATEWAY --- */}
-                    {isBound ? (
+                    {isValorantLinked ? (
                       /* BOUND / SYNCHRONIZED STATE */
                       <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
                         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -770,14 +1048,16 @@ export default function GameData() {
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-white font-black text-lg tracking-wide">
-                                  {trackerGamerTag}
+                                  {resolvedValorantHandle}
                                 </span>
-                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
-                                  #{trackerTagLine}
-                                </span>
+                                {resolvedValorantTag && (
+                                  <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                                    #{resolvedValorantTag}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-slate-400 mt-0.5">
-                                GradeGamer ID is permanently synchronized to this Riot account.
+                                GradeGamer ID is synchronized with Riot Valorant telemetry node.
                               </p>
                               <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
                                 <span className="text-slate-500 uppercase font-bold">Standing:</span>
@@ -786,14 +1066,24 @@ export default function GameData() {
                             </div>
                           </div>
 
-                          {/* Sync Trigger Button */}
-                          <button
-                            onClick={handleSyncFromAPI}
-                            disabled={isSyncingTracker}
-                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
-                          >
-                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
-                          </button>
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2.5">
+                            <button
+                              onClick={() => setShowUnlinkModal(true)}
+                              disabled={isSyncingTracker}
+                              className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/60 text-red-400 font-bold text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition disabled:opacity-50 cursor-pointer"
+                              title="Unlink Account & Purge Telemetry"
+                            >
+                              UNLINK
+                            </button>
+                            <button
+                              onClick={handleSyncFromAPI}
+                              disabled={isSyncingTracker}
+                              className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2 cursor-pointer"
+                            >
+                              <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -813,12 +1103,10 @@ export default function GameData() {
                           </span>
                         </div>
 
-                        {/* PERMANENT BINDING WARNING BANNER */}
-                        <div className="bg-amber-950/30 border border-amber-500/40 rounded-lg p-3 text-xs text-amber-200/90 leading-relaxed flex items-start space-x-2.5">
-                          <span className="text-base shrink-0">⚠️</span>
-                          <div>
-                            <strong className="font-bold text-amber-300">IMPORTANT:</strong> Once linked, your GradeGamer profile will be <strong className="text-white">permanently bound</strong> to this Riot ID. Multi-account switching is disabled to ensure telemetry authenticity and anti-smurf integrity.
-                          </div>
+                        {/* MODERN TELEMETRY STATUS BADGE */}
+                        <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-cyan-950/20 border border-cyan-500/20 text-xs text-cyan-300 font-mono">
+                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                          <span>Live telemetry calibration & LCC calculation active. Nodes can be unlinked anytime in settings.</span>
                         </div>
 
                         {/* COMPACT INPUT GRID */}
@@ -850,106 +1138,173 @@ export default function GameData() {
                           </div>
                         </div>
 
-                        {/* BIND AND SYNC ACTION BUTTON */}
+                        {/* CONNECT AND SYNC ACTION BUTTON */}
                         <button
                           onClick={handleSyncFromAPI}
                           disabled={isSyncingTracker}
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2 cursor-pointer"
                         >
-                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC VALORANT ACCOUNT'}</span>
+                          <span>{isSyncingTracker ? 'CONNECTING IDENTITY...' : 'CONNECT & SYNC VALORANT'}</span>
                         </button>
                       </div>
                     )}
                   </>
                 ) : selectedGame === 'Counter-Strike 2' ? (
                   <>
-                    {/* --- COUNTER-STRIKE 2 ACCOUNT GATEWAY --- */}
-                    {isCs2Bound ? (
-                      /* BOUND / SYNCHRONIZED STATE */
-                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
-                        <div className="flex flex-wrap items-center justify-between gap-4">
-                          {/* Identity Badge */}
-                          <div className="flex items-center space-x-4">
-                            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xl font-black">
-                              🛡️
-                            </div>
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-white font-black text-lg tracking-wide">
-                                  Steam Account ID
-                                </span>
-                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
-                                  {cs2SteamId}
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-400 mt-0.5">
-                                GradeGamer ID is synchronized with Counter-Strike 2 Steam Node.
-                              </p>
-                              <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
-                                <span className="text-slate-500 uppercase font-bold">Standing:</span>
-                                <span className="text-amber-400 font-black uppercase">{latestRank}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Sync Trigger Button */}
-                          <button
-                            onClick={handleSyncCs2FromAPI}
-                            disabled={isSyncingTracker}
-                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
-                          >
-                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* FIRST-TIME USER ONBOARDING */
-                      <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-6 shadow-xl space-y-4 mb-4 max-w-3xl">
-                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-                          <div>
-                            <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                              Initial Setup
-                            </div>
-                            <h3 className="text-sm font-black text-white uppercase tracking-wide">
-                              Link CS2 Steam Account
-                            </h3>
-                          </div>
-                          <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
-                            UNLINKED
+                    {/* CS2 MANUAL TELEMETRY INGESTION NODE */}
+                    <div className="bg-[#0b1320] border border-cyan-500/20 rounded-xl p-6 shadow-lg mb-4 max-w-3xl">
+                      <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
+                        <div>
+                          <span className="text-[10px] font-mono tracking-widest text-cyan-400 font-bold uppercase block">
+                            MANUAL TELEMETRY INGESTION NODE
                           </span>
+                          <h3 className="text-sm md:text-base font-black text-white uppercase tracking-wide">
+                            COUNTER-STRIKE 2 MATCH TELEMETRY
+                          </h3>
+                        </div>
+                        <span className="px-2.5 py-1 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded-full">
+                          MANUAL PROTOCOL
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-400 mb-5 font-mono leading-relaxed">
+                        Input individual Counter-Strike 2 match scores directly to calibrate your performance rating and LCC linear growth.
+                      </p>
+
+                      <form onSubmit={handleManualCs2Submit} className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">MAP</label>
+                            <select
+                              value={cs2Form.map}
+                              onChange={(e) => setCs2Form({ ...cs2Form, map: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            >
+                              <option value="DE_MIRAGE">Mirage</option>
+                              <option value="DE_INFERNO">Inferno</option>
+                              <option value="DE_NUKE">Nuke</option>
+                              <option value="DE_ANCIENT">Ancient</option>
+                              <option value="DE_ANUBIS">Anubis</option>
+                              <option value="DE_DUST2">Dust II</option>
+                              <option value="DE_VERTIGO">Vertigo</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">OUTCOME</label>
+                            <select
+                              value={cs2Form.outcome}
+                              onChange={(e) => setCs2Form({ ...cs2Form, outcome: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            >
+                              <option value="VICTORY">VICTORY</option>
+                              <option value="DEFEAT">DEFEAT</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">RANK / PREMIER STANDING</label>
+                            <select
+                              value={cs2Form.rank}
+                              onChange={(e) => setCs2Form({ ...cs2Form, rank: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono font-bold text-amber-400"
+                            >
+                              <option value="PREMIER (20,000+)">PREMIER (20,000+)</option>
+                              <option value="PREMIER (15,000 - 19,999)">PREMIER (15,000 - 19,999)</option>
+                              <option value="PREMIER (10,000 - 14,999)">PREMIER (10,000 - 14,999)</option>
+                              <option value="PREMIER (5,000 - 9,999)">PREMIER (5,000 - 9,999)</option>
+                              <option value="GLOBAL ELITE">GLOBAL ELITE</option>
+                              <option value="SUPREME FIRST CLASS">SUPREME FIRST CLASS</option>
+                              <option value="LEGENDARY EAGLE">LEGENDARY EAGLE</option>
+                              <option value="DISTINGUISHED MASTER GUARDIAN">DISTINGUISHED MASTER GUARDIAN</option>
+                              <option value="MASTER GUARDIAN">MASTER GUARDIAN</option>
+                              <option value="GOLD NOVA">GOLD NOVA</option>
+                              <option value="SILVER">SILVER</option>
+                            </select>
+                          </div>
                         </div>
 
-                        {/* COMPACT INPUT GRID */}
-                        <div className="grid grid-cols-1 gap-3 items-end pt-1">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                              Steam ID / SteamID64 / Friend ID
-                            </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">KILLS</label>
                             <input
-                              type="text"
-                              value={cs2SteamId}
-                              onChange={(e) => setCs2SteamId(e.target.value)}
-                              placeholder="e.g. 76561198000000000 or 104358896"
-                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+                              type="number"
+                              min="0"
+                              placeholder="e.g. 21"
+                              value={cs2Form.kills}
+                              onChange={(e) => setCs2Form({ ...cs2Form, kills: e.target.value })}
+                              required
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">DEATHS</label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="e.g. 14"
+                              value={cs2Form.deaths}
+                              onChange={(e) => setCs2Form({ ...cs2Form, deaths: e.target.value })}
+                              required
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">ASSISTS</label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="e.g. 5"
+                              value={cs2Form.assists}
+                              onChange={(e) => setCs2Form({ ...cs2Form, assists: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">ADR (AVG DMG)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              placeholder="e.g. 88.5"
+                              value={cs2Form.adr}
+                              onChange={(e) => setCs2Form({ ...cs2Form, adr: e.target.value })}
+                              required
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">HEADSHOT %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              placeholder="e.g. 45"
+                              value={cs2Form.hsPercent}
+                              onChange={(e) => setCs2Form({ ...cs2Form, hsPercent: e.target.value })}
+                              required
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
                             />
                           </div>
                         </div>
 
-                        {/* BIND AND SYNC ACTION BUTTON */}
                         <button
-                          onClick={handleSyncCs2FromAPI}
-                          disabled={isSyncingTracker}
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                          type="submit"
+                          disabled={isSubmitting}
+                          className="w-full py-3 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer"
                         >
-                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC CS2 ACCOUNT'}</span>
+                          {isSubmitting ? 'RECORDING MATCH...' : 'RECORD CS2 MATCH TELEMETRY'}
                         </button>
-                      </div>
-                    )}
+                      </form>
+                    </div>
                   </>
                 ) : selectedGame === 'Dota 2' ? (
                   <>
                     {/* --- DOTA 2 ACCOUNT GATEWAY --- */}
-                    {isDotaBound ? (
+                    {isDotaLinked ? (
                       /* BOUND / SYNCHRONIZED STATE */
                       <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
                         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -964,11 +1319,11 @@ export default function GameData() {
                                   Steam Account ID
                                 </span>
                                 <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
-                                  {dotaAccountId}
+                                  {resolvedDotaHandle}
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400 mt-0.5">
-                                GradeGamer ID is permanently bound to this Dota 2 Friend ID.
+                                GradeGamer ID is synchronized with Dota 2 Steam node.
                               </p>
                               <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono">
                                 <span className="text-slate-500 uppercase font-bold">Standing:</span>
@@ -985,14 +1340,24 @@ export default function GameData() {
                             </div>
                           </div>
 
-                          {/* Sync Trigger Button */}
-                          <button
-                            onClick={handleSyncDota2FromAPI}
-                            disabled={isSyncingTracker}
-                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
-                          >
-                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
-                          </button>
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2.5">
+                            <button
+                              onClick={() => setShowUnlinkModal(true)}
+                              disabled={isSyncingTracker}
+                              className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/60 text-red-400 font-bold text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition disabled:opacity-50 cursor-pointer"
+                              title="Unlink Account & Purge Telemetry"
+                            >
+                              UNLINK
+                            </button>
+                            <button
+                              onClick={handleSyncDota2FromAPI}
+                              disabled={isSyncingTracker}
+                              className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2 cursor-pointer"
+                            >
+                              <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1012,12 +1377,10 @@ export default function GameData() {
                           </span>
                         </div>
 
-                        {/* PERMANENT BINDING WARNING BANNER */}
-                        <div className="bg-amber-950/30 border border-amber-500/40 rounded-lg p-3 text-xs text-amber-200/90 leading-relaxed flex items-start space-x-2.5">
-                          <span className="text-base shrink-0">⚠️</span>
-                          <div>
-                            <strong className="font-bold text-amber-300">IMPORTANT:</strong> Once linked, your GradeGamer profile will be <strong className="text-white">permanently bound</strong> to this Dota 2 Account ID. Multi-account switching is disabled to ensure telemetry authenticity and anti-smurf integrity.
-                          </div>
+                        {/* MODERN TELEMETRY STATUS BADGE */}
+                        <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-cyan-950/20 border border-cyan-500/20 text-xs text-cyan-300 font-mono">
+                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                          <span>Live telemetry calibration & LCC calculation active. Nodes can be unlinked anytime in settings.</span>
                         </div>
 
                         {/* COMPACT INPUT GRID */}
@@ -1036,13 +1399,13 @@ export default function GameData() {
                           </div>
                         </div>
 
-                        {/* BIND AND SYNC ACTION BUTTON */}
+                        {/* CONNECT AND SYNC ACTION BUTTON */}
                         <button
                           onClick={handleSyncDota2FromAPI}
                           disabled={isSyncingTracker}
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2 cursor-pointer"
                         >
-                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC DOTA 2 ACCOUNT'}</span>
+                          <span>{isSyncingTracker ? 'CONNECTING IDENTITY...' : 'CONNECT & SYNC DOTA 2 ACCOUNT'}</span>
                         </button>
                       </div>
                     )}
@@ -1050,7 +1413,7 @@ export default function GameData() {
                 ) : selectedGame === 'League of Legends' ? (
                   <>
                     {/* --- LEAGUE OF LEGENDS ACCOUNT GATEWAY --- */}
-                    {isLolBound ? (
+                    {isLolLinked ? (
                       /* BOUND / SYNCHRONIZED STATE */
                       <div className="bg-[#0b131d] border border-slate-800/90 rounded-xl p-5 shadow-xl mb-4 max-w-3xl">
                         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1062,10 +1425,10 @@ export default function GameData() {
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-white font-black text-lg tracking-wide">
-                                  {lolRiotId || 'Riot Account'}
+                                  {resolvedLolHandle}
                                 </span>
-                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
-                                  {lolRegion.toUpperCase()}
+                                <span className="text-cyan-400 font-mono font-bold text-sm bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded uppercase">
+                                  {userProfile?.lol_region || lolRegion?.toUpperCase() || 'ASIA'}
                                 </span>
                               </div>
                               <p className="text-xs text-slate-400 mt-0.5">
@@ -1086,14 +1449,24 @@ export default function GameData() {
                             </div>
                           </div>
 
-                          {/* Sync Trigger Button */}
-                          <button
-                            onClick={handleSyncLolFromAPI}
-                            disabled={isSyncingTracker}
-                            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2"
-                          >
-                            <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
-                          </button>
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2.5">
+                            <button
+                              onClick={() => setShowUnlinkModal(true)}
+                              disabled={isSyncingTracker}
+                              className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/60 text-red-400 font-bold text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition disabled:opacity-50 cursor-pointer"
+                              title="Unlink Account & Purge Telemetry"
+                            >
+                              UNLINK
+                            </button>
+                            <button
+                              onClick={handleSyncLolFromAPI}
+                              disabled={isSyncingTracker}
+                              className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-6 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.35)] flex items-center space-x-2 cursor-pointer"
+                            >
+                              <span>{isSyncingTracker ? 'FETCHING TELEMETRY...' : '📡 SYNC LATEST MATCH'}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1111,6 +1484,12 @@ export default function GameData() {
                           <span className="bg-amber-950/80 border border-amber-800/60 text-amber-400 text-[10px] font-bold px-2.5 py-1 rounded-full">
                             UNLINKED
                           </span>
+                        </div>
+
+                        {/* MODERN TELEMETRY STATUS BADGE */}
+                        <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-cyan-950/20 border border-cyan-500/20 text-xs text-cyan-300 font-mono">
+                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                          <span>Live telemetry calibration & LCC calculation active. Nodes can be unlinked anytime in settings.</span>
                         </div>
 
                         {/* COMPACT INPUT GRID */}
@@ -1144,13 +1523,13 @@ export default function GameData() {
                           </div>
                         </div>
 
-                        {/* BIND AND SYNC ACTION BUTTON */}
+                        {/* CONNECT AND SYNC ACTION BUTTON */}
                         <button
                           onClick={handleSyncLolFromAPI}
                           disabled={isSyncingTracker}
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2"
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-black text-xs py-2.5 px-4 rounded-lg uppercase tracking-wider transition shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center space-x-2 cursor-pointer"
                         >
-                          <span>{isSyncingTracker ? 'BINDING IDENTITY...' : '🔒 BIND & SYNC LEAGUE OF LEGENDS'}</span>
+                          <span>{isSyncingTracker ? 'CONNECTING IDENTITY...' : 'CONNECT & SYNC LEAGUE OF LEGENDS'}</span>
                         </button>
                       </div>
                     )}
@@ -1532,6 +1911,72 @@ export default function GameData() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* --- CUSTOM CYBERPUNK / GLASSMORPHIC UNLINK CONFIRMATION MODAL --- */}
+      {showUnlinkModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-[#0b131d] border border-red-500/40 rounded-2xl p-6 shadow-[0_0_50px_rgba(239,68,68,0.25)] space-y-5">
+            {/* Modal Header */}
+            <div className="flex items-center gap-3.5 pb-4 border-b border-slate-800/90">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 text-lg font-black shrink-0">
+                ⚠️
+              </div>
+              <div>
+                <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-400">
+                  CRITICAL ACTION • PERMANENT PURGE
+                </div>
+                <h3 className="text-base font-black text-white uppercase tracking-wide">
+                  Disconnect {selectedGame}
+                </h3>
+              </div>
+            </div>
+
+            {/* Warning Message */}
+            <div className="space-y-3 font-mono text-xs text-slate-300">
+              <p className="leading-relaxed">
+                Are you sure you want to disconnect your <span className="text-white font-bold">{selectedGame}</span> telemetry node?
+              </p>
+              <div className="p-3.5 rounded-xl bg-red-950/20 border border-red-500/20 space-y-1.5 text-[11px] text-red-200/90">
+                <div className="font-bold flex items-center gap-1.5 text-red-400">
+                  <span>⚡</span> CONSEQUENCES OF UNLINKING:
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-slate-400 text-[10.5px]">
+                  <li>All ingested <span className="text-slate-200">{selectedGame}</span> telemetry packets will be <strong className="text-red-300">permanently purged</strong>.</li>
+                  <li>Calculated <span className="text-slate-200">Learning Curve Coefficient (LCC)</span> and growth slope will reset to baseline.</li>
+                  <li>Active identity bindings will be severed.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowUnlinkModal(false)}
+                disabled={isSyncingTracker}
+                className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono font-bold text-slate-400 hover:text-white hover:border-slate-700 transition cursor-pointer"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUnlink}
+                disabled={isSyncingTracker}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-mono font-black uppercase tracking-wider transition shadow-[0_0_20px_rgba(239,68,68,0.4)] disabled:opacity-50 cursor-pointer flex items-center gap-2"
+              >
+                {isSyncingTracker ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>PURGING NODE...</span>
+                  </>
+                ) : (
+                  <span>CONFIRM UNLINK & PURGE</span>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

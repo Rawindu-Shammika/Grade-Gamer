@@ -390,9 +390,9 @@ app.post('/api/sync-dota2', async (req, res) => {
       const { error: updateErr } = await supabase
         .from('profiles')
         .update({
-          dota2_rank: competitiveRank,
-          dota2_account_id: cleanAccountId,
-          steam_id: cleanAccountId,
+          dota2_rank: competitiveRank || 'UNRATED',
+          dota2_steam_id: String(cleanAccountId).trim(),
+          steam_id: String(cleanAccountId).trim(),
           steam_avatar_url: avatarUrl || userProfile?.steam_avatar_url
         })
         .eq('id', userId);
@@ -404,7 +404,7 @@ app.post('/api/sync-dota2', async (req, res) => {
       await supabase
         .from('profiles')
         .update({ 
-          steam_id: cleanAccountId,
+          steam_id: String(cleanAccountId).trim(),
           steam_avatar_url: avatarUrl || userProfile?.steam_avatar_url
         })
         .eq('id', userId);
@@ -420,15 +420,77 @@ app.post('/api/sync-dota2', async (req, res) => {
   }
 });
 
+// Helper to fetch real LoL Rank by PUUID from Riot League-v4 API
+async function fetchLolRank(puuid, regionRouting, riotApiKey) {
+  try {
+    const platformMap = {
+      sea: 'sg2',
+      americas: 'na1',
+      europe: 'euw1',
+      asia: 'kr'
+    };
+    const platform = platformMap[regionRouting?.toLowerCase()] || regionRouting || 'sg2';
+
+    // 1. Query League entries by PUUID
+    const leagueUrl = `https://${platform}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`;
+    const leagueRes = await fetch(leagueUrl, {
+      headers: {
+        'X-Riot-Token': riotApiKey,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!leagueRes.ok) {
+      // Fallback with super-region if platform rejected
+      const directUrl = `https://${regionRouting}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`;
+      const directRes = await fetch(directUrl, {
+        headers: {
+          'X-Riot-Token': riotApiKey,
+          'Accept': 'application/json'
+        }
+      });
+      if (!directRes.ok) return 'UNRATED';
+      const directEntries = await directRes.json();
+      if (!Array.isArray(directEntries) || directEntries.length === 0) return 'UNRATED';
+      const target = directEntries.find(e => e.queueType === 'RANKED_SOLO_5x5') || directEntries[0];
+      return target?.tier ? `${target.tier} ${target.rank} (${target.leaguePoints} LP)` : 'UNRATED';
+    }
+
+    const entries = await leagueRes.json();
+    if (!Array.isArray(entries) || entries.length === 0) return 'UNRATED';
+
+    // 2. Prioritize Solo/Duo over Flex
+    const soloEntry = entries.find(e => e.queueType === 'RANKED_SOLO_5x5');
+    const flexEntry = entries.find(e => e.queueType === 'RANKED_FLEX_SR');
+    const target = soloEntry || flexEntry || entries[0];
+
+    if (!target || !target.tier) return 'UNRATED';
+
+    return `${target.tier} ${target.rank} (${target.leaguePoints} LP)`;
+  } catch (err) {
+    console.warn('[LoL Rank Fetch Warning]:', err.message);
+    return 'UNRATED';
+  }
+}
+
 // ----------------------------------------------------
 // LEAGUE OF LEGENDS RIOT API SYNC ROUTE
 // ----------------------------------------------------
 app.post('/api/sync-lol', async (req, res) => {
   try {
-    const { userId, riotId, region = 'sea' } = req.body; // Super-regions: americas, europe, asia, sea
+    const { userId, riotId, gameName: rawGameName, tagLine: rawTagLine, region = 'asia' } = req.body;
     const riotApiKey = process.env.RIOT_API_KEY;
 
-    if (!userId || !riotId || !riotId.includes('#')) {
+    let gameName = rawGameName;
+    let tagLine = rawTagLine;
+
+    if (riotId && riotId.includes('#')) {
+      const parts = riotId.split('#');
+      gameName = parts[0];
+      tagLine = parts[1];
+    }
+
+    if (!userId || !gameName || !tagLine) {
       return res.status(400).json({ error: 'Valid Riot ID (GameName#TagLine) and userId are required.' });
     }
 
@@ -436,22 +498,34 @@ app.post('/api/sync-lol', async (req, res) => {
       return res.status(500).json({ error: 'Riot API key is missing in server environment.' });
     }
 
-    const [gameName, tagLine] = riotId.split('#');
+    // Determine correct Riot Regional & Platform Routing
+    const cleanRegion = (region || 'asia').toLowerCase().trim();
+    const accountRouting = (cleanRegion === 'kr' || cleanRegion === 'jp' || cleanRegion === 'asia') 
+      ? 'asia' 
+      : (cleanRegion === 'na' || cleanRegion === 'br' || cleanRegion === 'lan' || cleanRegion === 'las' || cleanRegion === 'americas' 
+        ? 'americas' 
+        : (cleanRegion === 'euw' || cleanRegion === 'eune' || cleanRegion === 'europe' 
+          ? 'europe' 
+          : 'sea'));
+    const platformRouting = cleanRegion === 'asia' ? 'kr' : cleanRegion;
 
     // 1. Resolve PUUID via ACCOUNT-V1
-    const accountUrl = `https://${region}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`;
+    const accountUrl = `https://${accountRouting}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`;
     const accountRes = await fetch(accountUrl, { headers: { 'X-Riot-Token': riotApiKey } });
 
     if (!accountRes.ok) {
       const errText = await accountRes.text();
-      return res.status(accountRes.status).json({ error: `Riot Account lookup failed: ${errText}` });
+      return res.status(accountRes.status).json({ error: `Riot Account lookup failed on region [${accountRouting.toUpperCase()}]: ${errText}` });
     }
 
     const accountData = await accountRes.json();
     const puuid = accountData.puuid;
 
-    // 2. Fetch Latest Match ID via MATCH-V5
-    const matchesUrl = `https://${region}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1`;
+    // 2. Fetch Real Rank via LEAGUE-V4 API
+    const realLolRank = await fetchLolRank(puuid, platformRouting, riotApiKey);
+
+    // 3. Fetch Latest Match ID via MATCH-V5
+    const matchesUrl = `https://${accountRouting}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1`;
     const matchesRes = await fetch(matchesUrl, { headers: { 'X-Riot-Token': riotApiKey } });
     const matchIds = await matchesRes.json();
 
@@ -461,7 +535,7 @@ app.post('/api/sync-lol', async (req, res) => {
 
     const latestMatchId = matchIds[0];
 
-    // 3. Duplicate Check in lol_match_telemetry
+    // 4. Duplicate Check in lol_match_telemetry
     const { data: existingRecords } = await supabase
       .from('lol_match_telemetry')
       .select('id')
@@ -472,8 +546,8 @@ app.post('/api/sync-lol', async (req, res) => {
       return res.status(409).json({ error: `Match #${latestMatchId} has already been ingested.` });
     }
 
-    // 4. Fetch Match Details via MATCH-V5
-    const matchDetailUrl = `https://${region}.api.riotgames.com/lol/match/v5/matches/${latestMatchId}`;
+    // 5. Fetch Match Details via MATCH-V5
+    const matchDetailUrl = `https://${accountRouting}.api.riotgames.com/lol/match/v5/matches/${latestMatchId}`;
     const matchDetailRes = await fetch(matchDetailUrl, { headers: { 'X-Riot-Token': riotApiKey } });
     const matchData = await matchDetailRes.json();
 
@@ -482,7 +556,7 @@ app.post('/api/sync-lol', async (req, res) => {
       return res.status(404).json({ error: 'Participant telemetry not found in match payload.' });
     }
 
-    // 5. Calculate Standard Performance Score (0 - 100)
+    // 6. Calculate Standard Performance Score (0 - 100)
     const kills = participant.kills || 0;
     const deaths = Math.max(1, participant.deaths || 1);
     const assists = participant.assists || 0;
@@ -497,13 +571,15 @@ app.post('/api/sync-lol', async (req, res) => {
     const winBonus = participant.win ? 10 : 0;
     const performanceScore = parseFloat(Math.min(100, Math.max(10, kdaScore + csScore + kpScore + winBonus)).toFixed(1));
 
-    // 6. Structure Payload & Save to Supabase
+    // 7. Structure Payload & Save to Supabase
     const payload = {
       match_id: latestMatchId,
       champion_id: participant.championId,
       champion_name: participant.championName,
       outcome: participant.win ? 'VICTORY' : 'DEFEAT',
       role: participant.teamPosition || participant.individualPosition || 'UNKNOWN',
+      rank: realLolRank,
+      competitive_rank: realLolRank,
       kills,
       deaths: participant.deaths || 0,
       assists,
@@ -513,8 +589,9 @@ app.post('/api/sync-lol', async (req, res) => {
       gold_earned: participant.goldEarned || 0,
       vision_score: participant.visionScore || 0,
       duration_minutes: parseFloat(durationMin.toFixed(1)),
-      riot_id: `${gameName}#${tagLine}`,
+      riot_id: `${accountData.gameName || gameName}#${accountData.tagLine || tagLine}`,
       puuid,
+      region: cleanRegion.toUpperCase(),
       performance_score: performanceScore
     };
 
@@ -532,14 +609,39 @@ app.post('/api/sync-lol', async (req, res) => {
 
     if (insertError) throw insertError;
 
-    // Update Profile with bound Riot PUUID
-    await supabase
+    // Update Profile with bound Riot ID, PUUID, real rank, and region
+    const fullRiotId = `${accountData.gameName || gameName}#${accountData.tagLine || tagLine}`.trim();
+    const { error: profileErr } = await supabase
       .from('profiles')
-      .update({ lol_puuid: puuid })
+      .update({
+        lol_riot_id: fullRiotId,
+        lol_puuid: puuid || null,
+        lol_rank: realLolRank,
+        lol_region: cleanRegion.toUpperCase()
+      })
       .eq('id', userId);
 
-    console.log(`✅ Stored LoL Match #${latestMatchId} in lol_match_telemetry: ${inserted.id}`);
-    return res.status(200).json({ success: true, telemetry: inserted, record: inserted, payload, performanceScore });
+    if (profileErr) {
+      console.error('[LoL Profile Update Failed]:', profileErr.message);
+      await supabase
+        .from('profiles')
+        .update({ lol_puuid: puuid, lol_region: cleanRegion.toUpperCase() })
+        .eq('id', userId);
+    }
+
+    console.log(`✅ Stored LoL Match #${latestMatchId} in lol_match_telemetry for Region ${cleanRegion.toUpperCase()}: ${inserted.id}`);
+    return res.status(200).json({ 
+      success: true, 
+      telemetry: inserted, 
+      riotId: fullRiotId,
+      gameName: accountData.gameName || gameName,
+      tagLine: accountData.tagLine || tagLine,
+      region: cleanRegion.toUpperCase(),
+      rank: realLolRank,
+      record: inserted, 
+      payload, 
+      performanceScore 
+    });
   } catch (err) {
     console.error('[LoL Sync Route Error]:', err);
     return res.status(500).json({ error: err.message || 'Internal Server Error' });
@@ -547,126 +649,153 @@ app.post('/api/sync-lol', async (req, res) => {
 });
 
 // ----------------------------------------------------
-// COUNTER-STRIKE 2 (CS2) TELEMETRY SYNC ROUTE
+// COUNTER-STRIKE 2 (CS2) MANUAL TELEMETRY INGESTION ROUTE
 // ----------------------------------------------------
-app.post('/api/sync-cs2', async (req, res) => {
+app.post('/api/manual-entry-cs2', async (req, res) => {
   try {
-    const { userId, steamId } = req.body;
+    const { userId, map, outcome, rank, kills, deaths, assists, adr, hsPercent } = req.body;
 
-    if (!userId || !steamId) {
-      return res.status(400).json({ error: 'User ID and Steam ID / Steam Community ID are required.' });
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required.' });
     }
 
-    const cleanSteamId = steamId.toString().trim();
+    const numKills = parseInt(kills, 10) || 0;
+    const numDeaths = Math.max(1, parseInt(deaths, 10) || 1);
+    const numAssists = parseInt(assists, 10) || 0;
+    const numAdr = parseFloat(adr) || 0.0;
+    const numHs = Math.min(100, Math.max(0, parseInt(hsPercent, 10) || 0));
+    const selectedMap = map ? map.toUpperCase() : 'DE_MIRAGE';
+    const matchOutcome = (outcome || 'VICTORY').toUpperCase();
+    const competitiveRank = rank || 'PREMIER (15,000 - 19,999)';
 
-    // 1. Fetch CS2 Stats via Public Steam Stats / Tracker endpoint
-    const apiKey = process.env.STEAM_API_KEY || 'YOUR_STEAM_API_KEY';
-    let statsUrl = `https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v0002/?appid=730&key=${apiKey}&steamid=${cleanSteamId}`;
-    
-    let statsRes;
-    try {
-      statsRes = await fetch(statsUrl);
-    } catch (e) {
-      console.warn('[CS2 Steam API Fetch Warning]:', e.message);
-    }
-    
-    // Fallback Mock/Simulated recent match if Steam API profile is private or unreachable
-    let kills = 18;
-    let deaths = 12;
-    let headshots = 9;
-    let damage = 2150;
-    let roundsPlayed = 22;
-    let matchOutcome = 'VICTORY';
-    const maps = ['de_mirage', 'de_inferno', 'de_nuke', 'de_ancient', 'de_dust2', 'de_anubis'];
-    let mapName = maps[Math.floor(Math.random() * maps.length)];
-    let matchId = `cs2_${Date.now()}`;
+    const kd = parseFloat((numKills / numDeaths).toFixed(2));
 
-    if (statsRes && statsRes.ok) {
-      const statsJson = await statsRes.json();
-      const statsList = statsJson?.playerstats?.stats || [];
-      const getStat = (name) => statsList.find(s => s.name === name)?.value || 0;
+    // Calculate GradeGamer Standardized Performance Score (0 - 100)
+    const kdScore = Math.min(45, (kd / 2.0) * 45);
+    const adrScore = Math.min(35, (numAdr / 110.0) * 35);
+    const hsScore = Math.min(20, (numHs / 60.0) * 20);
+    const performanceScore = parseFloat(Math.min(100, Math.max(15, kdScore + adrScore + hsScore)).toFixed(1));
 
-      const totalKills = getStat('total_kills');
-      const totalDeaths = Math.max(1, getStat('total_deaths'));
-      const totalHs = getStat('total_kills_headshot');
-      const totalDamage = getStat('total_damage_done');
-      const totalRounds = Math.max(1, getStat('total_rounds_played'));
+    const matchId = `cs2_manual_${Date.now()}`;
 
-      // Calculate per-match averages based on total history
-      kills = Math.round((totalKills / totalRounds) * 20) || 18;
-      deaths = Math.max(1, Math.round((totalDeaths / totalRounds) * 20) || 14);
-      headshots = Math.round((totalHs / Math.max(1, totalKills)) * kills) || 8;
-      damage = Math.round((totalDamage / totalRounds) * 20) || 1900;
-      roundsPlayed = 20;
-    }
-
-    // 2. Compute Performance Metrics
-    const kd = parseFloat((kills / Math.max(1, deaths)).toFixed(2));
-    const adr = parseFloat((damage / Math.max(1, roundsPlayed)).toFixed(1));
-    const hsPercent = parseFloat(((headshots / Math.max(1, kills)) * 100).toFixed(1));
-
-    // 3. GradeGamer Performance Score Calculation (0 - 100)
-    // Formula: KD (40 pts) + ADR (40 pts) + HS% (20 pts)
-    const kdScore = Math.min(40, (kd / 1.5) * 40);
-    const adrScore = Math.min(40, (adr / 90.0) * 40);
-    const hsScore = Math.min(20, (hsPercent / 50.0) * 20);
-    const performanceScore = parseFloat(Math.min(100, Math.max(10, kdScore + adrScore + hsScore)).toFixed(1));
-
-    // 4. Payload Structure
     const payload = {
       match_id: matchId,
-      map_name: mapName,
-      map: mapName,
+      map: selectedMap.startsWith('DE_') ? selectedMap : `DE_${selectedMap}`,
       outcome: matchOutcome,
-      kills,
-      deaths,
-      headshots,
+      rank: competitiveRank,
+      competitive_rank: competitiveRank,
+      kills: numKills,
+      deaths: numDeaths,
+      assists: numAssists,
       kd,
-      adr,
-      hs_percent: hsPercent,
-      hs_percentage: hsPercent,
-      rounds_played: roundsPlayed,
-      steam_id: cleanSteamId,
-      performance_score: performanceScore
+      adr: numAdr,
+      hs_percent: numHs,
+      performance_score: performanceScore,
+      ingestion_mode: 'MANUAL_VERIFIED_ENTRY'
     };
 
-    // 5. Duplicate Check
-    const { data: existing } = await supabase
-      .from('cs2_match_telemetry')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('metrics_payload->>match_id', matchId);
-
-    if (existing && existing.length > 0) {
-      return res.status(409).json({ error: 'This match has already been ingested.' });
-    }
-
-    // 6. Insert Telemetry into Supabase
-    const { data: inserted, error: insertError } = await supabase
+    // Insert into Supabase
+    const { data: inserted, error: insertErr } = await supabase
       .from('cs2_match_telemetry')
       .insert({
         user_id: userId,
         game_title: 'Counter-Strike 2',
-        ingestion_type: 'AUTOMATED_API',
+        ingestion_type: 'MANUAL_ENTRY',
         performance_score: performanceScore,
         metrics_payload: payload
       })
       .select()
       .single();
 
-    if (insertError) throw insertError;
+    if (insertErr) throw insertErr;
 
-    // Update Profile
-    await supabase
-      .from('profiles')
-      .update({ cs2_steam_id: cleanSteamId, cs2_rank: 'GLOBAL ELITE', steam_id: cleanSteamId })
-      .eq('id', userId);
+    // Update Profile standing with chosen CS2 rank
+    try {
+      await supabase
+        .from('profiles')
+        .update({ cs2_rank: competitiveRank })
+        .eq('id', userId);
+    } catch (e) {
+      console.warn('[CS2 Profile Rank Update Warning]:', e.message);
+    }
 
-    console.log(`✅ Stored CS2 Match #${matchId} in cs2_match_telemetry: ${inserted.id}`);
-    return res.status(200).json({ success: true, telemetry: inserted, record: inserted, payload, performanceScore });
+    console.log(`✅ Stored Manual CS2 Match #${matchId} in cs2_match_telemetry: ${inserted.id}`);
+    return res.status(200).json({ success: true, telemetry: inserted, record: inserted, payload, performanceScore, rank: competitiveRank });
   } catch (err) {
-    console.error('[CS2 Sync Error]:', err);
-    return res.status(500).json({ error: err.message || 'CS2 sync failed' });
+    console.error('[CS2 Manual Entry Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to record CS2 match.' });
+  }
+});
+
+// POST /api/unlink-game
+app.post('/api/unlink-game', async (req, res) => {
+  try {
+    const { userId, gameKey } = req.body;
+
+    if (!userId || !gameKey) {
+      return res.status(400).json({ error: 'User ID and gameKey are required.' });
+    }
+
+    const key = gameKey.toLowerCase();
+    let profileUpdate = {};
+    let telemetryTable = '';
+
+    if (key.includes('val')) {
+      profileUpdate = { valorant_id: null, valorant_ign: null, valorant_tag: null, valorant_rank: 'UNRATED' };
+      telemetryTable = 'valorant_match_telemetry';
+    } else if (key.includes('dota')) {
+      profileUpdate = { dota2_steam_id: null, steam_id: null, dota2_rank: 'UNRATED' };
+      telemetryTable = 'dota2_match_telemetry';
+    } else if (key.includes('lol') || key.includes('league')) {
+      profileUpdate = { lol_puuid: null, lol_riot_id: null, lol_rank: 'UNRATED' };
+      telemetryTable = 'lol_match_telemetry';
+    } else if (key.includes('cs') || key.includes('counter')) {
+      profileUpdate = { cs2_steam_id: null, steam_id: null, cs2_rank: 'UNRATED' };
+      telemetryTable = 'cs2_match_telemetry';
+    }
+
+    // 1. Update Profile in Supabase safely
+    if (Object.keys(profileUpdate).length > 0) {
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update(profileUpdate)
+        .eq('id', userId);
+
+      if (profileErr) {
+        console.warn('[Unlink Profile Warning]:', profileErr.message);
+        // Fallback with minimal safe columns
+        if (key.includes('val')) {
+          await supabase.from('profiles').update({ valorant_ign: null, valorant_tag: null }).eq('id', userId);
+        } else if (key.includes('dota')) {
+          await supabase.from('profiles').update({ steam_id: null }).eq('id', userId);
+        } else if (key.includes('lol') || key.includes('league')) {
+          await supabase.from('profiles').update({ lol_puuid: null }).eq('id', userId);
+        } else if (key.includes('cs') || key.includes('counter')) {
+          await supabase.from('profiles').update({ steam_id: null }).eq('id', userId);
+        }
+      }
+    }
+
+    // 2. Delete Telemetry Rows for this Game
+    if (telemetryTable) {
+      const { error: telemErr } = await supabase
+        .from(telemetryTable)
+        .delete()
+        .eq('user_id', userId);
+
+      if (telemErr) {
+        console.warn(`[Telemetry Purge Warning on ${telemetryTable}]:`, telemErr.message);
+      }
+    }
+
+    console.log(`✅ Successfully unlinked ${gameKey} for user: ${userId}`);
+    return res.status(200).json({
+      success: true,
+      message: `${gameKey} unlinked successfully.`
+    });
+  } catch (err) {
+    console.error('[Unlink Catch Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to unlink account.' });
   }
 });
 
@@ -681,3 +810,4 @@ app.get('/health', (req, res) => {
 app.listen(port, () => {
   console.log(`[Express API] Server running on http://localhost:${port}`);
 });
+

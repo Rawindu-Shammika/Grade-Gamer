@@ -148,12 +148,37 @@ const getTelemetryTable = (gameKey) => {
 
 export const HomeDashboard = () => {
   const { user, profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length 
-    ? profile.esports_titles 
-    : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'];
+  const [activeTitles, setActiveTitles] = useState(() => (
+    profile?.esports_titles?.length 
+      ? profile.esports_titles 
+      : (profile?.active_titles?.length ? profile.active_titles : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'])
+  ));
 
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [actInfo, setActInfo] = useState(null);
+
+  useEffect(() => {
+    if (profile?.esports_titles?.length) {
+      setActiveTitles(profile.esports_titles);
+    } else if (profile?.active_titles?.length) {
+      setActiveTitles(profile.active_titles);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    const handleTitlesSync = (e) => {
+      const updated = e.detail?.activeTitles || e.detail?.esports_titles;
+      if (updated && Array.isArray(updated) && updated.length > 0) {
+        setActiveTitles(updated);
+        if (selectedGame && !updated.includes(selectedGame)) {
+          setSelectedGame(updated[0]);
+        }
+      }
+    };
+
+    window.addEventListener('gg_titles_updated', handleTitlesSync);
+    return () => window.removeEventListener('gg_titles_updated', handleTitlesSync);
+  }, [selectedGame]);
 
   useEffect(() => {
     if (String(selectedGame || '').toLowerCase().includes('val')) {
@@ -162,10 +187,10 @@ export const HomeDashboard = () => {
   }, [selectedGame]);
 
   useEffect(() => {
-    if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
-      setSelectedGame(registeredTitles[0]);
+    if (activeTitles.length > 0 && !activeTitles.includes(selectedGame)) {
+      setSelectedGame(activeTitles[0]);
     }
-  }, [registeredTitles, selectedGame]);
+  }, [activeTitles, selectedGame]);
   const [valorantMatches, setValorantMatches] = useState([]);
   const [boundHandle, setBoundHandle] = useState('UNLINKED');
   const [loading, setLoading] = useState(true);
@@ -291,21 +316,23 @@ export const HomeDashboard = () => {
 
       try {
         // Fetch profile handle
-        const { data: profile } = await supabase
+        const { data: userProfileData } = await supabase
           .from('profiles')
-          .select('valorant_ign, valorant_tag, steam_id, lol_puuid, lol_rank, cs2_steam_id, cs2_rank')
+          .select('*, valorant_id, lol_riot_id, lol_puuid, dota2_steam_id, cs2_steam_id')
           .eq('id', user.id)
           .maybeSingle();
 
+        const p = userProfileData || profile || {};
+
         if (isMounted) {
-          if (selectedGame === 'Dota 2' && profile?.steam_id) {
-            setBoundHandle(`STEAM ID: ${profile.steam_id}`);
-          } else if (selectedGame === 'Counter-Strike 2' && (profile?.cs2_steam_id || profile?.steam_id)) {
-            setBoundHandle(`STEAM ID: ${profile.cs2_steam_id || profile.steam_id}`);
-          } else if (selectedGame === 'League of Legends' && profile?.lol_puuid) {
-            setBoundHandle(`RIOT PUUID: ${profile.lol_puuid.slice(0, 10)}...`);
-          } else if (profile?.valorant_ign) {
-            setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
+          if (selectedGame === 'Dota 2' && (p.dota2_steam_id || p.steam_id)) {
+            setBoundHandle(`STEAM ID: ${p.dota2_steam_id || p.steam_id}`);
+          } else if (selectedGame === 'Counter-Strike 2' && (p.cs2_steam_id || p.steam_id)) {
+            setBoundHandle(`STEAM ID: ${p.cs2_steam_id || p.steam_id}`);
+          } else if (selectedGame === 'League of Legends' && (p.lol_riot_id || p.lol_puuid)) {
+            setBoundHandle(p.lol_riot_id ? `${p.lol_riot_id}` : `RIOT PUUID: ${p.lol_puuid.slice(0, 10)}...`);
+          } else if (p.valorant_id || (p.valorant_ign && p.valorant_tag)) {
+            setBoundHandle(p.valorant_id || `${p.valorant_ign}#${p.valorant_tag || ''}`);
           } else {
             setBoundHandle('UNLINKED');
           }
@@ -569,11 +596,17 @@ export const HomeDashboard = () => {
             onChange={(e) => setSelectedGame(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
-            {registeredTitles.map((title) => (
-              <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
-                {title.toUpperCase()}
+            {activeTitles && activeTitles.length > 0 ? (
+              activeTitles.map((title) => (
+                <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
+                  {title.toUpperCase()}
+                </option>
+              ))
+            ) : (
+              <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">
+                VALORANT
               </option>
-            ))}
+            )}
           </select>
 
           {/* Dropdown Chevron Icon */}
