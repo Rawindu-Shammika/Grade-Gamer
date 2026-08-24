@@ -8,6 +8,7 @@ import { syncDota2Account } from '../services/dotaSyncService';
 import { syncLolAccount } from '../services/lolSyncService';
 import { getDotaHeroName } from '../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../utils/dotaStats';
+import { getUiImageUrl } from '../utils/supabaseAssets';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -34,9 +35,6 @@ const getTelemetryTable = (gameKey) => {
 export const MANUAL_GAMES = [
   'EA FC 27'
 ];
-
-// Supabase storage UI bucket reference
-const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
 
 // Only using the 2 requested images
 const GAMEDATA_BANNERS = [
@@ -1110,7 +1108,7 @@ export default function GameData() {
             className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
               }`}
             style={{
-              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundImage: `url(${getUiImageUrl(banner)})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center top 15%',
             }}

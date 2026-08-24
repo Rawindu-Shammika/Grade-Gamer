@@ -173,8 +173,7 @@ const getGameLogoUrl = (gameTitle) => {
   return `${SUPABASE_LOGO_BASE}/${encodeURIComponent(matchedFilename)}`;
 };
 
-const SUPABASE_UI_BASE = `${cleanBaseUrl}/storage/v1/object/public/UI`;
-const VALORANT_BANNER_URL = `${SUPABASE_UI_BASE}/VALORANT%20i.jpg`;
+const VALORANT_BANNER_URL = getUiImageUrl('VALORANT i.jpg');
 const ROSTER_BANNERS = ['ROSTER i.jpg', 'ROSTER ii.jpg', 'ROSTER iii.webp'];
 
 const getGameBannerUrl = (gameTitle) => {
@@ -183,19 +182,19 @@ const getGameBannerUrl = (gameTitle) => {
 
   // Map F1 titles explicitly to F1 i image in UI bucket
   if (title.includes('f1') || title.includes('formula 1')) {
-    return `${SUPABASE_UI_BASE}/F1%20i.avif`;
+    return getUiImageUrl('F1 i.avif');
   }
 
   if (title.includes('valorant')) {
-    return `${SUPABASE_UI_BASE}/VALORANT%20i.jpg`;
+    return getUiImageUrl('VALORANT i.jpg');
   }
 
   if (title.includes('dota')) {
-    return `${SUPABASE_UI_BASE}/DOTA%20iii.avif`;
+    return getUiImageUrl('DOTA iii.avif');
   }
 
   if (title.includes('assetto')) {
-    return `${SUPABASE_UI_BASE}/AC%20iii.jpg`;
+    return getUiImageUrl('AC iii.jpg');
   }
 
   return '';
@@ -853,7 +852,7 @@ export const RosterManagement = () => {
             className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
               }`}
             style={{ 
-              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundImage: `url(${getUiImageUrl(banner)})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center top 15%'
             }}

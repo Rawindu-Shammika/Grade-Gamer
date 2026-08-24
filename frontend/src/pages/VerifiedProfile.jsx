@@ -14,9 +14,6 @@ import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
 import { useMemo } from 'react';
 
-// Supabase storage UI bucket reference
-const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
-
 // Only using the 2 requested images
 const RESUME_BANNERS = [
   'DOTA iii.avif',
@@ -429,7 +426,7 @@ export const VerifiedProfile = () => {
               index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
             }`}
             style={{
-              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundImage: `url(${getUiImageUrl(banner)})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center top 15%',
             }}

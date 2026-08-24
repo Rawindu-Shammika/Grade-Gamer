@@ -8,11 +8,9 @@ import {
   Sparkles
 } from 'lucide-react';
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
-const SUPABASE_ASSETS_BASE = `${cleanUrl}/storage/v1/object/public/assets`;
+import { getAssetImageUrl } from '../../utils/supabaseAssets';
 
-const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER%20M.avif', 'PROFILES.png'];
+const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER M.avif', 'PROFILES.png'];
 
 /**
  * LandingPage - Production Presentation Layout (Cleaned)
@@ -23,7 +21,7 @@ const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER%20M.avif', 'PROF
  * - Top Navigation is moved to the RootLayout.
  */
 export const LandingPage = ({ uiImages, onAuthClick, onDashboardClick, onViewChange, setActiveTab, onNavigate, user, logout, heroBanners }) => {
-  const banners = heroBanners && heroBanners.length > 0 ? heroBanners : HERO_IMAGES.map(img => `${SUPABASE_ASSETS_BASE}/${img}`);
+  const banners = heroBanners && heroBanners.length > 0 ? heroBanners : HERO_IMAGES.map(img => getAssetImageUrl(img));
   const [heroIndex, setHeroIndex] = useState(0);
   const [isFading, setIsFading] = useState(false);
 

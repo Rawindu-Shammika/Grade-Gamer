@@ -5,9 +5,6 @@ import { getUiImageUrl } from '../utils/supabaseAssets';
 import useAuth from '../hooks/useAuth';
 import { supabase } from '../services/supabaseClient';
 
-const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
-const SUPABASE_UI_BASE = `${cleanUrl}/storage/v1/object/public/UI`;
 const PEER_REVIEW_BANNERS = ['TEAM i.jpg', 'TEAM ii.png'];
 
 const GAME_ART_MAP = {
@@ -401,7 +398,7 @@ export const PeerReviews = () => {
               index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
             }`}
             style={{ 
-              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundImage: `url(${getUiImageUrl(banner)})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center top 15%'
             }}
