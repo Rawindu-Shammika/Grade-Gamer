@@ -27,6 +27,7 @@ const getTelemetryTable = (gameKey) => {
   if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
   if (g.includes('apex')) return 'apex_match_telemetry';
   if (g.includes('f1')) return 'f1_match_telemetry';
+  if (g.includes('fc') || g.includes('ea fc')) return 'fc27_match_telemetry';
   return 'valorant_match_telemetry';
 };
 
@@ -152,6 +153,50 @@ export default function GameData() {
     damage: '1450',
     placement: '1'
   });
+
+  // EA Sports FC 27 State & Direct Fetch
+  const [fcMatches, setFcMatches] = useState([]);
+  const [isSubmittingFc, setIsSubmittingFc] = useState(false);
+  const [fcForm, setFcForm] = useState({
+    division: 'Elite Division',
+    skillRating: '2150',
+    outcome: 'VICTORY',
+    goalsScored: '4',
+    goalsConceded: '1',
+    possession: '56',
+    passAccuracy: '90',
+    xG: '3.4',
+    shotsOnTarget: '8'
+  });
+
+  const fetchFcTelemetry = async () => {
+    try {
+      let uid = user?.id || profile?.id;
+      if (!uid) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        uid = sessionData?.session?.user?.id;
+      }
+      if (!uid) return;
+
+      const { data, error } = await supabase
+        .from('fc27_match_telemetry')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setFcMatches(data);
+      }
+    } catch (err) {
+      console.error('[FC Fetch DB Error]:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (String(selectedGame || '').toLowerCase().includes('fc')) {
+      fetchFcTelemetry();
+    }
+  }, [selectedGame, user?.id]);
 
   // Unlink Modal State
   const [showUnlinkModal, setShowUnlinkModal] = useState(false);
@@ -353,6 +398,85 @@ export default function GameData() {
     return { baseline: `${baseline} Pts`, current: `${current} Pts`, n: `${n} Matches`, slope };
   }, [apexMatches]);
 
+  // Dynamic LCC Computation for FC 27
+  const fcLcc = React.useMemo(() => {
+    if (!fcMatches || fcMatches.length === 0) {
+      return { pBaseline: '0.0 Pts', pCurrent: '0.0 Pts', nMatches: 0, slope: '0.00', slopeNumeric: 0 };
+    }
+    const sorted = [...fcMatches].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const windowSize = Math.min(5, sorted.length);
+    const initial = sorted.slice(0, windowSize);
+    const recent = sorted.slice(-windowSize);
+
+    const baseline = (initial.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / initial.length).toFixed(1);
+    const current = (recent.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / recent.length).toFixed(1);
+    const n = sorted.length;
+    const slopeVal = ((Number(current) - Number(baseline)) / Math.max(1, n));
+    const slope = slopeVal > 0 ? `+${slopeVal.toFixed(2)}` : slopeVal.toFixed(2);
+
+    return {
+      pBaseline: `${baseline} Pts`,
+      pCurrent: `${current} Pts`,
+      nMatches: n,
+      slope,
+      slopeNumeric: slopeVal
+    };
+  }, [fcMatches]);
+
+  const handleFcManualSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const uid = user?.id || profile?.id;
+    if (!uid) {
+      showNotification({ show: true, type: 'error', message: 'Please sign in before submitting match telemetry.' });
+      return;
+    }
+
+    setIsSubmittingFc(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/manual-entry-eafc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: uid,
+          ...fcForm
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit match');
+
+      if (data.match) {
+        setFcMatches((prev) => [data.match, ...(prev || [])]);
+      } else {
+        await fetchFcTelemetry();
+      }
+
+      showNotification({
+        show: true,
+        type: 'success',
+        title: 'EA FC 27 MATCH INGESTED',
+        map: `${fcForm.outcome} (${fcForm.goalsScored} - ${fcForm.goalsConceded})`,
+        score: data.performanceScore,
+        acs: `${fcForm.possession}% POSS`,
+        kd: `${fcForm.passAccuracy}% PASS`
+      });
+
+      setFcForm(prev => ({
+        ...prev,
+        goalsScored: '',
+        goalsConceded: '',
+        possession: '',
+        passAccuracy: '',
+        xG: '',
+        shotsOnTarget: ''
+      }));
+    } catch (err) {
+      showNotification({ show: true, type: 'error', message: err.message || 'Error recording match' });
+    } finally {
+      setIsSubmittingFc(false);
+    }
+  };
+
   const [syncToast, setSyncToast] = useState({ show: false, type: 'success' });
 
   const showNotification = (config) => {
@@ -455,6 +579,9 @@ export default function GameData() {
 
   // Compute LCC strictly using ACS/Performance scores via unified calculator on active cycle matches
   const lccResults = React.useMemo(() => {
+    if (selectedGame === 'EA FC 27' || selectedGame?.toLowerCase().includes('fc')) {
+      return fcLcc;
+    }
     if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
       const dotaLcc = calculateDotaLinearGrowth(cycleMatches);
       const list = cycleMatches || [];
@@ -476,7 +603,7 @@ export default function GameData() {
       };
     }
     return calculateLCCMetrics(cycleMatches);
-  }, [cycleMatches, selectedGame]);
+  }, [cycleMatches, selectedGame, fcLcc]);
 
   const latestRank = React.useMemo(() => {
     if (cycleMatches.length === 0) {
@@ -1885,6 +2012,149 @@ export default function GameData() {
             )}
 
           </div>
+        ) : selectedGame === 'EA FC 27' ? (
+          /* EA SPORTS FC 27 MANUAL INGESTION CARD */
+          <div className="w-full max-w-4xl mx-auto mb-8 font-mono">
+            <div className="p-7 md:p-8 rounded-3xl bg-[#0b1320] border border-amber-500/40 shadow-[0_0_30px_rgba(245,158,11,0.1)] space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                <div>
+                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest block">
+                    MANUAL SCORECARD VERIFICATION
+                  </span>
+                  <h3 className="text-lg font-bold text-white uppercase mt-0.5">
+                    EA SPORTS FC 27 MATCH REPORT ENTRY
+                  </h3>
+                </div>
+                <span className="self-start sm:self-auto px-3 py-1 rounded-full text-[10px] font-bold bg-amber-950/70 border border-amber-500/40 text-amber-300 uppercase">
+                  MANUAL PROTOCOL
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Input verified post-match stats from EA Sports FC 27 to calibrate linear performance ratings and calculate match growth delta.
+              </p>
+
+              <form onSubmit={handleFcManualSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">DIVISION / BRACKET</label>
+                    <select
+                      value={fcForm.division}
+                      onChange={(e) => setFcForm({ ...fcForm, division: e.target.value })}
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2.5 text-xs text-white focus:outline-none font-bold"
+                    >
+                      <option value="Elite Division">Elite Division</option>
+                      <option value="Champions Finals">Champions Finals</option>
+                      <option value="Division 1">Division 1</option>
+                      <option value="Division 2">Division 2</option>
+                      <option value="Division 3">Division 3</option>
+                      <option value="Division 4">Division 4</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">SKILL RATING (SR)</label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 2150"
+                      value={fcForm.skillRating}
+                      onChange={(e) => setFcForm({ ...fcForm, skillRating: e.target.value })}
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2.5 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">OUTCOME</label>
+                    <select
+                      value={fcForm.outcome}
+                      onChange={(e) => setFcForm({ ...fcForm, outcome: e.target.value })}
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2.5 text-xs text-amber-400 font-bold focus:outline-none"
+                    >
+                      <option value="VICTORY">VICTORY (WIN)</option>
+                      <option value="DRAW">DRAW</option>
+                      <option value="DEFEAT">DEFEAT (LOSS)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">GOALS SCORED</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="e.g. 4"
+                      value={fcForm.goalsScored}
+                      onChange={(e) => setFcForm({ ...fcForm, goalsScored: e.target.value })}
+                      required
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">GOALS CONCEDED</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="e.g. 1"
+                      value={fcForm.goalsConceded}
+                      onChange={(e) => setFcForm({ ...fcForm, goalsConceded: e.target.value })}
+                      required
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">POSSESSION %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      placeholder="e.g. 56"
+                      value={fcForm.possession}
+                      onChange={(e) => setFcForm({ ...fcForm, possession: e.target.value })}
+                      required
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">PASS ACCURACY %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      placeholder="e.g. 90"
+                      value={fcForm.passAccuracy}
+                      onChange={(e) => setFcForm({ ...fcForm, passAccuracy: e.target.value })}
+                      required
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase text-slate-400 font-bold block mb-1">xG / SHOTS ON TARGET</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="e.g. 3.4"
+                      value={fcForm.xG}
+                      onChange={(e) => setFcForm({ ...fcForm, xG: e.target.value })}
+                      className="w-full bg-[#070d14] border border-slate-700/80 focus:border-amber-400 rounded-lg p-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmittingFc}
+                  className="w-full py-3.5 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition shadow-[0_0_20px_rgba(245,158,11,0.25)] cursor-pointer mt-2"
+                >
+                  {isSubmittingFc ? 'SUBMITTING MATCH SCORECARD...' : '✍ RECORD EA FC 27 MATCH TELEMETRY'}
+                </button>
+              </form>
+            </div>
+          </div>
         ) : (
           /* CHANNEL B: MANUAL SCORECARD VERIFICATION */
           <div className="p-7 md:p-8 rounded-3xl bg-white dark:bg-[#0b111e] border border-amber-500/50 shadow-[0_0_30px_rgba(245,158,11,0.12)] space-y-6">
@@ -1969,7 +2239,101 @@ export default function GameData() {
       )}
 
       {/* DATA PIPELINE SECTION */}
-      {selectedGame?.toLowerCase().includes('apex') ? (
+      {selectedGame === 'EA FC 27' ? (
+        <div className="bg-[#0b1320] border border-amber-500/20 rounded-xl p-6 shadow-2xl font-mono">
+          <div className="flex items-center justify-between mb-4 border-b border-amber-500/10 pb-3">
+            <div>
+              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-widest block">
+                DATA PIPELINE
+              </span>
+              <h4 className="text-sm font-black text-white uppercase">
+                EA SPORTS FC 27 TELEMETRY STREAM LOG
+              </h4>
+            </div>
+            <span className="text-xs text-amber-400 bg-amber-950/60 px-3 py-1 rounded border border-amber-500/30">
+              {fcMatches.length} Matches Ingested
+            </span>
+          </div>
+
+          <div className="space-y-2.5">
+            {fcMatches.length > 0 ? (
+              fcMatches.map((m, idx) => {
+                const p = m.metrics_payload || {};
+                const outcome = String(p.outcome || 'VICTORY').toUpperCase();
+                const isWin = outcome === 'VICTORY' || outcome.includes('WIN');
+                const isDraw = outcome === 'DRAW';
+                const scoreDisplay = p.score_display || `${p.goals_scored ?? 0} - ${p.goals_conceded ?? 0}`;
+
+                return (
+                  <div
+                    key={m.id || idx}
+                    className="bg-[#060a12] border border-slate-800 hover:border-amber-500/40 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all"
+                  >
+                    <div className="flex items-center gap-4 min-w-[240px]">
+                      <div>
+                        <h5 className={`text-xs font-black uppercase ${isWin ? 'text-amber-400' : isDraw ? 'text-slate-300' : 'text-rose-400'}`}>
+                          {outcome}
+                        </h5>
+                        <span className="text-[9px] text-slate-500 block">MATCH SCORE</span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-base font-black text-white">{scoreDisplay}</h4>
+                          <span className="px-2 py-0.5 bg-amber-950/70 border border-amber-500/40 text-amber-300 text-[9px] rounded font-bold uppercase">
+                            {p.division || 'Elite Division'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 block">
+                          {new Date(m.created_at || Date.now()).toLocaleDateString()} • ID: {String(m.id).slice(0, 8)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-6 text-right justify-between md:justify-end">
+                      <div>
+                        <span className="text-xs font-black text-amber-300">{p.possession || 50}%</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">POSSESSION</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-emerald-400">{p.pass_accuracy || 80}%</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">PASS ACC</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-cyan-300">{p.xg || '0.0'}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">xG</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-amber-400">{Number(m.performance_score || 75).toFixed(1)}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">LCC SCORE</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await supabase.from('fc27_match_telemetry').delete().eq('id', m.id);
+                          setFcMatches(prev => prev.filter(item => item.id !== m.id));
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg transition border-none bg-transparent cursor-pointer"
+                        title="Delete Match"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-10">
+                <span className="text-2xl block mb-2">⚽</span>
+                <h5 className="text-xs font-bold text-slate-300 uppercase">No EA FC 27 Matches Ingested</h5>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Submit a match scorecard above to record your first match telemetry packet.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : selectedGame?.toLowerCase().includes('apex') ? (
         <div className="bg-[#0b1320] border border-cyan-500/20 rounded-xl p-6 shadow-2xl font-mono">
           <div className="flex items-center justify-between mb-4 border-b border-cyan-500/10 pb-3">
             <div>

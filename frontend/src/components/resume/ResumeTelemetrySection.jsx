@@ -57,6 +57,13 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
     cs2: { label: 'COUNTER-STRIKE 2', statKey: 'cs2', shortLabel: 'CS2' },
     'counter-strike 2': { label: 'COUNTER-STRIKE 2', statKey: 'cs2', shortLabel: 'CS2' },
     counter_strike_2: { label: 'COUNTER-STRIKE 2', statKey: 'cs2', shortLabel: 'CS2' },
+    ea_fc_27: { label: 'EA FC 27', statKey: 'ea_fc_27', shortLabel: 'EA FC 27' },
+    ea_fc: { label: 'EA FC 27', statKey: 'ea_fc_27', shortLabel: 'EA FC 27' },
+    eafc27: { label: 'EA FC 27', statKey: 'ea_fc_27', shortLabel: 'EA FC 27' },
+    'ea fc 27': { label: 'EA FC 27', statKey: 'ea_fc_27', shortLabel: 'EA FC 27' },
+    apex: { label: 'APEX LEGENDS', statKey: 'apex', shortLabel: 'APEX' },
+    apex_legends: { label: 'APEX LEGENDS', statKey: 'apex', shortLabel: 'APEX' },
+    'apex legends': { label: 'APEX LEGENDS', statKey: 'apex', shortLabel: 'APEX' },
     assetto_corsa: { label: 'ASSETTO CORSA', statKey: 'assettoCorsa', shortLabel: 'ASSETTO' },
     assettocorsa: { label: 'ASSETTO CORSA', statKey: 'assettoCorsa', shortLabel: 'ASSETTO' },
     f1_25: { label: 'F1 25', statKey: 'f1_25', shortLabel: 'F1 25' },
@@ -93,6 +100,9 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
   const [dotaMatches, setDotaMatches] = useState([]);
   const [lolMatches, setLolMatches] = useState([]);
   const [cs2Matches, setCs2Matches] = useState([]);
+  const [f1Matches, setF1Matches] = useState([]);
+  const [fcMatches, setFcMatches] = useState([]);
+  const [apexMatches, setApexMatches] = useState([]);
 
   // Fetch direct game telemetry rows on mount for accurate live ranks
   useEffect(() => {
@@ -101,37 +111,23 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
 
     const fetchLatestMatchData = async () => {
       try {
-        const [valRes, dotaRes, lolRes, cs2Res] = await Promise.all([
-          supabase
-            .from('valorant_match_telemetry')
-            .select('*')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('dota2_match_telemetry')
-            .select('*')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('lol_match_telemetry')
-            .select('*')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('cs2_match_telemetry')
-            .select('*')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false })
-            .limit(5)
+        const [valRes, dotaRes, lolRes, cs2Res, f1Res, fcRes, apexRes] = await Promise.all([
+          supabase.from('valorant_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
+          supabase.from('dota2_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
+          supabase.from('lol_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
+          supabase.from('cs2_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
+          supabase.from('f1_match_telemetry').select('*').order('created_at', { ascending: false }).limit(5),
+          supabase.from('fc27_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
+          supabase.from('apex_match_telemetry').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }).limit(5),
         ]);
 
         if (valRes.data) setValorantMatches(valRes.data);
         if (dotaRes.data) setDotaMatches(dotaRes.data);
         if (lolRes.data) setLolMatches(lolRes.data);
         if (cs2Res.data) setCs2Matches(cs2Res.data);
+        if (f1Res.data) setF1Matches(f1Res.data);
+        if (fcRes.data) setFcMatches(fcRes.data);
+        if (apexRes.data) setApexMatches(apexRes.data);
       } catch (e) {
         console.warn('Could not fetch auxiliary telemetry rows:', e.message);
       }
@@ -191,6 +187,7 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
         idValue: metrics.val.id,
         rank: metrics.val.rank,
         shortLabel: 'VALORANT',
+        isManual: false,
         theme: {
           border: 'border-rose-500/20 hover:border-rose-500/40',
           headerText: 'text-rose-400',
@@ -206,6 +203,7 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
         idValue: String(metrics.dota.id).replace('STEAM: ', ''),
         rank: metrics.dota.rank,
         shortLabel: 'DOTA 2',
+        isManual: false,
         theme: {
           border: 'border-amber-500/20 hover:border-amber-500/40',
           headerText: 'text-amber-400',
@@ -221,6 +219,7 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
         idValue: metrics.lol.id,
         rank: metrics.lol.rank,
         shortLabel: 'LEAGUE',
+        isManual: false,
         theme: {
           border: 'border-cyan-500/20 hover:border-cyan-500/40',
           headerText: 'text-cyan-400',
@@ -231,11 +230,16 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
       };
     }
     if (k.includes('cs') || k.includes('counter')) {
+      const cs2Count = cs2Matches?.length || Number(gameStats?.cs2?.matches || 0);
+      const cs2Rank = userProfile?.cs2_rank || cs2Matches?.[0]?.metrics_payload?.rank || 'PREMIER RATING';
       return {
         idLabel: 'ENTRY',
-        idValue: metrics.cs2.id,
-        rank: metrics.cs2.rank,
+        idValue: 'MANUAL SCORECARD',
+        rank: cs2Rank,
         shortLabel: 'CS2',
+        isManual: true,
+        mainValue: cs2Count > 0 ? `${cs2Count} Matches Ingested` : 'Match Ingestion Node',
+        subText: 'MANUAL VERIFIED',
         theme: {
           border: 'border-amber-500/20 hover:border-amber-500/40',
           headerText: 'text-amber-400',
@@ -245,11 +249,75 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
         }
       };
     }
+    if (k.includes('apex')) {
+      const apexCount = apexMatches?.length || Number(gameStats?.apex?.matches || 0);
+      const apexRank = userProfile?.apex_rank || apexMatches?.[0]?.metrics_payload?.rank || 'DIAMOND IV';
+      return {
+        idLabel: 'STATUS',
+        idValue: 'VERIFIED NODE',
+        rank: apexRank,
+        shortLabel: 'APEX',
+        isManual: true,
+        mainValue: apexCount > 0 ? `${apexCount} Fixtures Ingested` : 'Telemetry Tier',
+        subText: 'VERIFIED NODE',
+        theme: {
+          border: 'border-cyan-500/20 hover:border-cyan-500/40',
+          headerText: 'text-cyan-400',
+          badge: 'text-cyan-300 bg-cyan-950/70 border border-cyan-500/30',
+          footerText: 'text-cyan-300',
+          footerBorder: 'border-cyan-500/10'
+        }
+      };
+    }
+    if (k.includes('f1')) {
+      const f1Count = f1Matches?.length || Number(gameStats?.f1_25?.matches || 0);
+      const f1Best = f1Matches?.[0]?.lap_time_seconds ? `BEST LAP: ${f1Matches[0].lap_time_seconds}s` : 'PACE RATING';
+      return {
+        idLabel: 'STATUS',
+        idValue: 'VERIFIED NODE',
+        rank: f1Best,
+        shortLabel: 'F1 25',
+        isManual: true,
+        mainValue: f1Count > 0 ? `${f1Count} Laps Logged` : 'Pace Rating',
+        subText: 'VERIFIED NODE',
+        theme: {
+          border: 'border-emerald-500/20 hover:border-emerald-500/40',
+          headerText: 'text-emerald-400',
+          badge: 'text-emerald-300 bg-emerald-950/70 border border-emerald-500/30',
+          footerText: 'text-emerald-300',
+          footerBorder: 'border-emerald-500/10'
+        }
+      };
+    }
+    if (k.includes('fc') || k.includes('ea_fc') || k.includes('fifa')) {
+      const fcCount = fcMatches?.length || Number(gameStats?.ea_fc_27?.matches || 0);
+      const fcDiv = fcMatches?.[0]?.metrics_payload?.division || userProfile?.fc27_division || 'ELITE DIVISION';
+      return {
+        idLabel: 'STATUS',
+        idValue: 'VERIFIED NODE',
+        rank: fcDiv,
+        shortLabel: 'EA FC 27',
+        isManual: true,
+        mainValue: fcCount > 0 ? `${fcCount} Matches Ingested` : 'Calibrated Node',
+        subText: 'VERIFIED NODE',
+        theme: {
+          border: 'border-amber-500/20 hover:border-amber-500/40',
+          headerText: 'text-amber-400',
+          badge: 'text-amber-300 bg-amber-950/70 border border-amber-500/30',
+          footerText: 'text-amber-300',
+          footerBorder: 'border-amber-500/10'
+        }
+      };
+    }
+
     return {
       idLabel: 'STATUS',
       idValue: 'VERIFIED NODE',
       rank: 'CALIBRATED',
       shortLabel: key.toUpperCase().replace(/_/g, ' '),
+      isManual: true,
+      mainValue: 'Telemetry Node',
+      subText: 'VERIFIED NODE',
       theme: {
         border: 'border-purple-500/20 hover:border-purple-500/40',
         headerText: 'text-purple-400',
@@ -260,69 +328,86 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
     };
   };
 
+  const isManualEntryKey = (key) => {
+    const k = (key || '').toLowerCase().trim();
+    return (
+      k.includes('cs') ||
+      k.includes('counter') ||
+      k.includes('apex') ||
+      k.includes('f1') ||
+      k.includes('fc') ||
+      k.includes('fifa') ||
+      k.includes('assetto')
+    );
+  };
+
   // 2. Resolve registered games list from profile or synced nodes
   const registeredGameKeys = useMemo(() => {
+    let keys = [];
     if (Array.isArray(activeTitles) && activeTitles.length > 0) {
-      return activeTitles.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
+      keys = activeTitles.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
+    } else if (Array.isArray(userProfile?.esports_titles) && userProfile.esports_titles.length > 0) {
+      keys = userProfile.esports_titles.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
+    } else if (Array.isArray(userProfile?.registered_games) && userProfile.registered_games.length > 0) {
+      keys = userProfile.registered_games.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
+    } else if (userProfile?.primary_game) {
+      keys = [userProfile.primary_game.toLowerCase().trim().replace(/[\s-]/g, '_')];
+    } else {
+      keys = Object.keys(gameStats).filter((key) => {
+        const g = gameStats[key];
+        return (Number(g?.hours || 0) > 0 || Number(g?.matches || 0) > 0);
+      });
     }
-    if (Array.isArray(userProfile?.esports_titles) && userProfile.esports_titles.length > 0) {
-      return userProfile.esports_titles.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
-    }
-    if (Array.isArray(userProfile?.registered_games) && userProfile.registered_games.length > 0) {
-      return userProfile.registered_games.map((g) => g.toLowerCase().trim().replace(/[\s-]/g, '_'));
-    }
-    if (userProfile?.primary_game) {
-      return [userProfile.primary_game.toLowerCase().trim().replace(/[\s-]/g, '_')];
-    }
-    // Fallback: only include games that have active telemetry recorded in gameStats
-    return Object.keys(gameStats).filter((key) => {
-      const g = gameStats[key];
-      return (Number(g?.hours || 0) > 0 || Number(g?.matches || 0) > 0);
-    });
+
+    return keys.filter((k) => !isManualEntryKey(k));
   }, [activeTitles, userProfile, gameStats]);
 
-  // 3. Filter playtime cards strictly for registered games
+  // 3. Filter playtime cards strictly for live registered games
   const registeredGameCards = useMemo(() => {
-    return registeredGameKeys.map((key) => {
-      const meta = GAME_METADATA[key] || { label: key.toUpperCase().replace(/_/g, ' '), statKey: key, shortLabel: key.toUpperCase() };
-      const stat = gameStats[meta.statKey] || gameStats[key] || gameStats[meta.label] || {};
-      const hours = Number(stat?.hours || 0);
-      const cardDetails = getGameCardDetails(key);
+    return registeredGameKeys
+      .filter((key) => !isManualEntryKey(key))
+      .map((key) => {
+        const meta = GAME_METADATA[key] || { label: key.toUpperCase().replace(/_/g, ' '), statKey: key, shortLabel: key.toUpperCase() };
+        const stat = gameStats[meta.statKey] || gameStats[key] || gameStats[meta.label] || {};
+        const hours = Number(stat?.hours || 0);
+        const cardDetails = getGameCardDetails(key);
 
-      return {
-        key,
-        label: meta.label,
-        hoursFormatted: hours > 0 ? hours.toFixed(1) : '0.0',
-        ...cardDetails
-      };
-    });
+        return {
+          key,
+          label: meta.label,
+          hoursFormatted: hours > 0 ? hours.toFixed(1) : '0.0',
+          ...cardDetails
+        };
+      });
   }, [registeredGameKeys, gameStats, metrics]);
 
-  // 4. Filter active Linear Growth slopes (non-zero) strictly for registered games
+  // 4. Filter active Linear Growth slopes (non-zero) strictly for live registered games
   const activeSlopeCards = useMemo(() => {
     const validSlopes = [];
 
-    registeredGameKeys.forEach((key) => {
-      const meta = GAME_METADATA[key] || { label: key.toUpperCase().replace(/_/g, ' '), statKey: key };
-      const stat = gameStats[meta.statKey] || gameStats[key] || gameStats[meta.label] || {};
-      const slope = typeof stat?.slope === 'number' ? stat.slope : parseFloat(stat?.slope || 0);
-      const matches = Number(stat?.matches || 0);
+    registeredGameKeys
+      .filter((key) => !isManualEntryKey(key))
+      .forEach((key) => {
+        const meta = GAME_METADATA[key] || { label: key.toUpperCase().replace(/_/g, ' '), statKey: key };
+        const stat = gameStats[meta.statKey] || gameStats[key] || gameStats[meta.label] || {};
+        const slope = typeof stat?.slope === 'number' ? stat.slope : parseFloat(stat?.slope || 0);
+        const matches = Number(stat?.matches || 0);
 
-      if (!isNaN(slope) && slope !== 0) {
-        const isPositive = slope > 0;
-        const formattedNum = slope.toFixed(2);
-        validSlopes.push({
-          key,
-          label: meta.label,
-          matches,
-          formattedText: isPositive ? `+${formattedNum}` : `${formattedNum}`,
-          colorClass: isPositive ? 'text-emerald-400' : 'text-rose-400',
-          borderClass: isPositive
-            ? 'border-emerald-500/20 bg-[#0b1320]'
-            : 'border-rose-500/20 bg-[#0b1320]',
-        });
-      }
-    });
+        if (!isNaN(slope) && slope !== 0) {
+          const isPositive = slope > 0;
+          const formattedNum = slope.toFixed(2);
+          validSlopes.push({
+            key,
+            label: meta.label,
+            matches,
+            formattedText: isPositive ? `+${formattedNum}` : `${formattedNum}`,
+            colorClass: isPositive ? 'text-emerald-400' : 'text-rose-400',
+            borderClass: isPositive
+              ? 'border-emerald-500/20 bg-[#0b1320]'
+              : 'border-rose-500/20 bg-[#0b1320]',
+          });
+        }
+      });
 
     return validSlopes;
   }, [registeredGameKeys, gameStats]);
@@ -333,10 +418,10 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
         Esports Competitive Telemetry & Performance Metrics
       </h2>
 
-      {/* Standardized 5-Column Grid with Compact Proportions */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+      {/* Standardized Responsive 2-Column / 3-Column Grid for Live API Telemetry & LCC */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         
-        {/* Playtime Hours Cards with Embedded ID & Live Rank Badge */}
+        {/* Playtime / Telemetry Cards with Embedded ID & Live Rank Badge */}
         {registeredGameCards.map((game) => (
           <div
             key={`hours-${game.key}`}
@@ -351,10 +436,22 @@ export const ResumeTelemetrySection = ({ userProfile = {}, gameStats = {} }) => 
                   {game.rank}
                 </span>
               </div>
-              <h4 className="text-lg font-black text-white leading-tight">
-                {game.hoursFormatted} <span className="text-xs font-normal text-slate-400">Hrs</span>
-              </h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Top 5% Telemetry</p>
+
+              {!game.isManual ? (
+                <>
+                  <h4 className="text-lg font-black text-white leading-tight">
+                    {game.hoursFormatted} <span className="text-xs font-normal text-slate-400">Hrs</span>
+                  </h4>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Top 5% Telemetry</p>
+                </>
+              ) : (
+                <>
+                  <h4 className="text-sm font-black text-white leading-tight mt-1">
+                    {game.mainValue}
+                  </h4>
+                  <p className="text-[10px] text-amber-400/90 font-mono font-bold mt-0.5">{game.subText}</p>
+                </>
+              )}
             </div>
 
             <div className={`mt-2.5 pt-2 border-t ${game.theme.footerBorder} flex items-center justify-between text-[11px] font-mono`}>

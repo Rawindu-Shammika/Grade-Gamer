@@ -979,6 +979,66 @@ app.get('/api/f1-telemetry', async (req, res) => {
   }
 });
 
+// POST dedicated manual entry endpoint for EA FC 27
+app.post('/api/manual-entry-eafc', async (req, res) => {
+  try {
+    const { userId, division, skillRating, outcome, goalsScored, goalsConceded, possession, passAccuracy, xG, shotsOnTarget } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    const gScored = parseInt(goalsScored, 10) || 0;
+    const gConceded = parseInt(goalsConceded, 10) || 0;
+    const poss = parseFloat(possession) || 50;
+    const passAcc = parseFloat(passAccuracy) || 80;
+    const xgVal = parseFloat(xG) || parseFloat((gScored * 0.85).toFixed(1));
+    const shots = parseInt(shotsOnTarget, 10) || gScored;
+
+    // Algorithmic Competitive Performance Score (50.0 - 99.0 scale)
+    const outcomeMultiplier = outcome === 'VICTORY' ? 1.15 : outcome === 'DRAW' ? 1.0 : 0.85;
+    const rawScore = (gScored * 8) - (gConceded * 4) + (poss * 0.4) + (passAcc * 0.45) + (shots * 1.2);
+    const performanceScore = Math.min(99.0, Math.max(50.0, parseFloat((rawScore * outcomeMultiplier).toFixed(1))));
+
+    const payload = {
+      division: division || 'Elite Division',
+      skill_rating: skillRating || '2150',
+      outcome: outcome || 'VICTORY',
+      goals_scored: gScored,
+      goals_conceded: gConceded,
+      score_display: `${gScored} - ${gConceded}`,
+      possession: poss,
+      pass_accuracy: passAcc,
+      xg: xgVal,
+      shots_on_target: shots,
+      performance_score: performanceScore
+    };
+
+    const { data, error } = await supabase
+      .from('fc27_match_telemetry')
+      .insert([{
+        user_id: userId,
+        game_title: 'EA FC 27',
+        ingestion_type: 'MANUAL_SCORECARD',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json({
+      message: 'EA FC 27 match recorded successfully',
+      performanceScore,
+      match: data
+    });
+  } catch (err) {
+    console.error('[EA FC Ingestion Error]:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to record FC 27 match' });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({

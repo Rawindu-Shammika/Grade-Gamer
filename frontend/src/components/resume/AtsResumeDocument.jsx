@@ -116,8 +116,8 @@ export const AtsResumeDocument = ({
         title: 'COUNTER-STRIKE 2',
         rank: (profile?.cs2_rank && profile.cs2_rank !== 'UNRATED' && profile.cs2_rank !== 'ACTIVE PROTOCOL') ? profile.cs2_rank : 'CALIBRATED MANUAL',
         idLabel: 'ENTRY',
-        idValue: profile?.cs2_steam_id ? `STEAM: ${profile.cs2_steam_id}` : 'MANUAL ENTRY',
-        hours: gameStats?.cs2?.hours ? `${gameStats.cs2.hours} Hrs` : '0.6 Hrs'
+        idValue: profile?.cs2_steam_id ? `STEAM: ${profile.cs2_steam_id}` : 'MANUAL SCORECARD',
+        hours: 'VERIFIED NODE'
       });
     }
 
@@ -130,11 +130,12 @@ export const AtsResumeDocument = ({
       const meta = GAME_METADATA[key] || { label: key.toUpperCase().replace(/_/g, ' '), statKey: key };
       const stat = gameStats[meta.statKey] || gameStats[key] || gameStats[meta.label] || {};
       const hours = Number(stat?.hours || 0);
+      const isManual = ['cs2', 'apex', 'f1_25', 'ea_fc_27', 'assettoCorsa'].includes(meta.statKey) || key.includes('cs') || key.includes('apex') || key.includes('f1') || key.includes('fc');
 
       return {
         key,
         label: meta.label,
-        hoursText: hours > 0 ? `${hours.toFixed(1)} Hours` : '0.0+ Hours',
+        hoursText: isManual ? 'VERIFIED NODE' : (hours > 0 ? `${hours.toFixed(1)} Hours` : '1.0+ Hours'),
       };
     });
   }, [registeredGameKeys, gameStats]);

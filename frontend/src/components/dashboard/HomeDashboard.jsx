@@ -208,6 +208,34 @@ export const HomeDashboard = () => {
   // F1 25 Telemetry Fetching & Polling
   const [f1Data, setF1Data] = useState(null);
 
+  // EA FC 27 Telemetry Fetching
+  const [fcMatches, setFcMatches] = useState([]);
+  const isFcSelected = selectedGame === 'EA FC 27' || String(selectedGame || '').toLowerCase().includes('fc') || String(selectedGame || '').toLowerCase().includes('fifa');
+
+  useEffect(() => {
+    if (isFcSelected && user?.id) {
+      const fetchFcMatches = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('fc27_match_telemetry')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: true });
+
+          if (!error && data) {
+            setFcMatches(data);
+          } else {
+            setFcMatches([]);
+          }
+        } catch (err) {
+          console.error('Error loading FC 27 matches:', err);
+        }
+      };
+
+      fetchFcMatches();
+    }
+  }, [isFcSelected, user?.id]);
+
   useEffect(() => {
     if (selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1')) {
       const fetchF1Telemetry = async () => {
@@ -429,6 +457,11 @@ export const HomeDashboard = () => {
   const payload = latestRecord?.metrics_payload || latestRecord || {};
 
   const liveRank = useMemo(() => {
+    if (isFcSelected) {
+      const latestFc = fcMatches.length > 0 ? fcMatches[fcMatches.length - 1] : null;
+      const p = latestFc?.metrics_payload || latestFc || {};
+      return (p.division || profile?.fc27_division || 'ELITE DIVISION').toUpperCase();
+    }
     if (selectedGame === 'F1 25') {
       return f1Data?.bestLap ? `BEST LAP: ${f1Data.bestLap}s` : 'CALIBRATING';
     }
@@ -445,7 +478,7 @@ export const HomeDashboard = () => {
       return payload?.rank || profile?.apex_rank || 'DIAMOND IV';
     }
     return payload?.rank || 'UNRATED';
-  }, [selectedGame, payload, profile, f1Data]);
+  }, [isFcSelected, fcMatches, selectedGame, payload, profile, f1Data]);
 
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
@@ -454,6 +487,23 @@ export const HomeDashboard = () => {
   }, [valorantMatches, selectedGame, actInfo]);
 
   const dashLCC = React.useMemo(() => {
+    if (isFcSelected) {
+      if (!fcMatches || fcMatches.length === 0) {
+        return { slopeNumeric: 0, slope: '0.00' };
+      }
+      const sorted = [...fcMatches].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const windowSize = Math.min(5, sorted.length);
+      const initial = sorted.slice(0, windowSize);
+      const recent = sorted.slice(-windowSize);
+
+      const baseline = initial.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / Math.max(1, initial.length);
+      const current = recent.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / Math.max(1, recent.length);
+      const n = sorted.length;
+      const slopeVal = ((current - baseline) / Math.max(1, n));
+      const slopeStr = slopeVal > 0 ? `+${slopeVal.toFixed(2)}` : slopeVal.toFixed(2);
+
+      return { slopeNumeric: slopeVal, slope: slopeStr };
+    }
     if (selectedGame === 'F1 25' && f1Data) {
       return {
         slopeNumeric: f1Data.linearGrowthSlope || 0,
@@ -469,10 +519,16 @@ export const HomeDashboard = () => {
       };
     }
     return calculateLCCMetrics(list);
-  }, [activeDashboardMatches, selectedGame, f1Data]);
+  }, [isFcSelected, fcMatches, activeDashboardMatches, selectedGame, f1Data]);
 
   // Calculate dynamic dashboard stats from the active matches stream
   const dashboardStats = React.useMemo(() => {
+    if (isFcSelected) {
+      return {
+        totalMatches: fcMatches.length,
+        hoursCompeted: (fcMatches.length * 0.3).toFixed(1)
+      };
+    }
     if (selectedGame === 'F1 25' && f1Data) {
       return {
         totalMatches: f1Data.totalLaps || 0,
@@ -515,6 +571,26 @@ export const HomeDashboard = () => {
   const isF1Selected = selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1');
 
   const activeGameTelemetry = useMemo(() => {
+    if (isFcSelected && fcMatches) {
+      return fcMatches.map((m, idx) => {
+        const p = m.metrics_payload || {};
+        const scoreVal = parseFloat(m.performance_score || p.performance_score || 75.0);
+        return {
+          matchIndex: `Match #${idx + 1}`,
+          sessionIndex: idx + 1,
+          scoreP: scoreVal.toFixed(1),
+          score: scoreVal,
+          acs: scoreVal,
+          division: p.division || 'Elite Division',
+          outcome: p.outcome || 'VICTORY',
+          scoreDisplay: p.score_display || `${p.goals_scored ?? 0} - ${p.goals_conceded ?? 0}`,
+          possession: p.possession || 50,
+          passAccuracy: p.pass_accuracy || 80,
+          xg: p.xg || '0.0',
+          map: `${p.outcome || 'VICTORY'} (${p.score_display || `${p.goals_scored ?? 0} - ${p.goals_conceded ?? 0}`})`
+        };
+      });
+    }
     if (isF1Selected && f1Data?.recentMatches) {
       return f1Data.recentMatches.map((m, idx) => {
         const scoreVal = parseFloat(m.score || m.performance_score || 75.0);
@@ -908,11 +984,17 @@ export const HomeDashboard = () => {
               <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                 {isF1Selected
                   ? 'Progression of Performance Rating across recorded sessions'
+                  : isFcSelected
+                  ? 'Progression of Match Performance Score across ingested fixtures'
                   : 'Progression of Average Combat Score (ACS) across ingested matches'}
               </p>
             </div>
-            <span className="px-2.5 py-1 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 rounded-lg">
-              {activeGameTelemetry.length} {isF1Selected ? 'Sessions Logged' : 'Matches Logged'}
+            <span className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg border ${
+              isFcSelected 
+                ? 'text-amber-400 bg-amber-950/60 border-amber-500/30' 
+                : 'text-cyan-400 bg-cyan-950/60 border-cyan-500/30'
+            }`}>
+              {activeGameTelemetry.length} {isF1Selected ? 'Sessions Logged' : isFcSelected ? 'Fixtures Logged' : 'Matches Logged'}
             </span>
           </div>
 
@@ -934,7 +1016,7 @@ export const HomeDashboard = () => {
                     tickLine={false}
                   />
                   <YAxis
-                    domain={isF1Selected ? [70, 100] : ['dataMin - 20', 'dataMax + 20']}
+                    domain={isF1Selected ? [70, 100] : isFcSelected ? [40, 100] : ['dataMin - 20', 'dataMax + 20']}
                     fontFamily="monospace"
                     fontSize={10}
                     stroke="#475569"
@@ -945,6 +1027,24 @@ export const HomeDashboard = () => {
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         const data = payload[0].payload;
+                        if (isFcSelected) {
+                          return (
+                            <div className="p-3 rounded-xl bg-[#04080e] border border-amber-500/40 shadow-xl font-mono">
+                              <div className="text-xs font-black text-white mb-1">
+                                Match #{data.sessionIndex} • {data.division}
+                              </div>
+                              <div className="text-xs font-black text-amber-400">
+                                Outcome: <span className="text-white">{data.outcome} ({data.scoreDisplay})</span>
+                              </div>
+                              <div className="text-xs font-black text-emerald-400 mt-0.5">
+                                Performance Score: <span className="text-white">{data.scoreP} Pts</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                Possession: {data.possession}% | Pass Acc: {data.passAccuracy}%
+                              </div>
+                            </div>
+                          );
+                        }
                         if (isF1Selected) {
                           return (
                             <div className="p-3 rounded-xl bg-[#04080e] border border-cyan-500/40 shadow-xl font-mono">
@@ -978,10 +1078,10 @@ export const HomeDashboard = () => {
                   <Line
                     type="monotone"
                     dataKey="acs"
-                    stroke="#22d3ee"
+                    stroke={isFcSelected ? '#f59e0b' : '#22d3ee'}
                     strokeWidth={2}
-                    dot={{ r: 4, fill: '#08101a', stroke: '#22d3ee', strokeWidth: 2 }}
-                    activeDot={{ r: 6, fill: '#22d3ee', stroke: '#ffffff', strokeWidth: 2 }}
+                    dot={{ r: 4, fill: '#08101a', stroke: isFcSelected ? '#f59e0b' : '#22d3ee', strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: isFcSelected ? '#f59e0b' : '#22d3ee', stroke: '#ffffff', strokeWidth: 2 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -995,10 +1095,10 @@ export const HomeDashboard = () => {
           </div>
         </div>
 
-        {/* RIGHT: LATEST INGESTED MATCHES / SESSIONS */}
+        {/* RIGHT: LATEST INGESTED MATCHES / SESSIONS / FIXTURES */}
         <div className="lg:col-span-4 p-5 rounded-2xl bg-[#070e17] border border-slate-800/80 flex flex-col">
           <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">
-            {isF1Selected ? 'LATEST INGESTED SESSIONS' : 'LATEST INGESTED MATCHES'}
+            {isF1Selected ? 'LATEST INGESTED SESSIONS' : isFcSelected ? 'LATEST INGESTED FIXTURES' : 'LATEST INGESTED MATCHES'}
           </h3>
 
           <div className="space-y-2.5 flex-1 overflow-y-auto max-h-64">
@@ -1006,36 +1106,60 @@ export const HomeDashboard = () => {
               activeGameTelemetry.slice(-4).reverse().map((item, idx) => (
                 <div 
                   key={idx}
-                  className="flex items-center justify-between p-3 rounded-xl bg-[#0b131f] border border-slate-800/80 hover:border-slate-700 transition"
+                  className={`flex items-center justify-between p-3 rounded-xl bg-[#0b131f] border border-slate-800/80 hover:border-slate-700 transition`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-1.5 h-6 rounded-full bg-cyan-400"></span>
-                    <div>
-                      <div className="text-xs font-bold text-white uppercase">{item.map}</div>
-                      <div className="text-[10px] font-mono text-slate-400">
-                        {isF1Selected ? `SESSION #${item.sessionIndex}` : `${item.matchIndex} Ingested`}
+                  {isFcSelected ? (
+                    <>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-1.5 h-6 rounded-full bg-amber-400"></span>
+                        <div>
+                          <div className="text-xs font-bold text-white uppercase">{item.map}</div>
+                          <div className="text-[10px] font-mono text-slate-400">
+                            {item.matchIndex} • {item.division}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                  <div className="text-right font-mono">
-                    {isF1Selected ? (
-                      <>
+                      <div className="text-right font-mono">
                         <div className="text-xs font-bold text-slate-200">
-                          LAP: <span className="text-emerald-400">{formatLapTime(item.lapTime)}</span>
+                          POSS: <span className="text-amber-400">{item.possession}%</span>
                         </div>
-                        <div className="text-[10px] font-bold text-cyan-400">
-                          SCORE: {item.score || item.scoreP}
+                        <div className="text-[10px] font-bold text-emerald-400">
+                          P: {item.scoreP}
                         </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="text-xs font-bold text-slate-200">
-                          {selectedGame === 'Dota 2' || selectedGame === 'League of Legends' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-1.5 h-6 rounded-full bg-cyan-400"></span>
+                        <div>
+                          <div className="text-xs font-bold text-white uppercase">{item.map}</div>
+                          <div className="text-[10px] font-mono text-slate-400">
+                            {isF1Selected ? `SESSION #${item.sessionIndex}` : `${item.matchIndex} Ingested`}
+                          </div>
                         </div>
-                        <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
-                      </>
-                    )}
-                  </div>
+                      </div>
+                      <div className="text-right font-mono">
+                        {isF1Selected ? (
+                          <>
+                            <div className="text-xs font-bold text-slate-200">
+                              LAP: <span className="text-emerald-400">{formatLapTime(item.lapTime)}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-cyan-400">
+                              SCORE: {item.score || item.scoreP}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs font-bold text-slate-200">
+                              {selectedGame === 'Dota 2' || selectedGame === 'League of Legends' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               ))
             ) : (
