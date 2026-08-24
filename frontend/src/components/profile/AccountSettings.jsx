@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../services/supabaseClient';
-import { ShieldCheck, Check, RefreshCw, AlertTriangle, ToggleLeft, ToggleRight, X, ShieldAlert } from 'lucide-react';
+import { ShieldCheck, Check, RefreshCw, AlertTriangle, ToggleLeft, ToggleRight, X, ShieldAlert, Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
 
 /**
  * AccountSettings Component
  * 
  * - Handles interactive profile setting configurations: allow_anonymous_reviews, update_frequency, and registered_genres.
  * - Integrates directly with public.player_profiles database table.
+ * - Supports in-app password reset / security key updates with show/hide password toggle.
  * - Used inside the floating settings modal overlay.
  */
 export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
@@ -23,6 +24,15 @@ export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
   const [statusType, setStatusType] = useState('success');
+
+  // Password reset/update state
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [passwordStatusMessage, setPasswordStatusMessage] = useState(null);
+  const [passwordStatusType, setPasswordStatusType] = useState('success');
 
   // Load user profile configurations from Supabase on mount
   useEffect(() => {
@@ -87,6 +97,41 @@ export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
       setStatusType('error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword) return;
+    if (newPassword.length < 6) {
+      setPasswordStatusMessage('Password must be at least 6 characters.');
+      setPasswordStatusType('error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordStatusMessage('Passwords do not match.');
+      setPasswordStatusType('error');
+      return;
+    }
+
+    setUpdatingPassword(true);
+    setPasswordStatusMessage(null);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+      if (error) throw error;
+      setPasswordStatusMessage('Security password updated successfully!');
+      setPasswordStatusType('success');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPasswordStatusMessage(null), 3500);
+    } catch (err) {
+      console.error('Password update failed:', err);
+      setPasswordStatusMessage(err.message || 'Failed to update password.');
+      setPasswordStatusType('error');
+    } finally {
+      setUpdatingPassword(false);
     }
   };
 
@@ -207,6 +252,121 @@ export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
         </div>
 
       </form>
+
+      {/* Divider */}
+      <div className="w-full border-t border-slate-200 dark:border-slate-800/80 my-5"></div>
+
+      {/* Security & Password Reset Section */}
+      <div className="space-y-4 p-5 rounded-2xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800/80">
+        <div className="flex items-center gap-2.5">
+          <KeyRound className="w-4 h-4 text-cyan-600 dark:text-[#00b4d8]" />
+          <div>
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider font-mono">
+              Update Security Password
+            </h4>
+            <p className="text-[10px] text-slate-600 dark:text-slate-400">
+              Establish a new authentication key for your GradeGamer verified identity.
+            </p>
+          </div>
+        </div>
+
+        {passwordStatusMessage && (
+          <div className={`text-[11px] px-4 py-2.5 rounded-xl flex items-start gap-3 border animate-in fade-in duration-200 ${
+            passwordStatusType === 'success' 
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+              : 'bg-red-500/10 border-red-500/30 text-red-400'
+          }`}>
+            {passwordStatusType === 'success' ? (
+              <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0 text-emerald-400" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-400" />
+            )}
+            <div>
+              <span className="font-bold">{passwordStatusType === 'success' ? 'Security Notice:' : 'Security Error:'}</span> {passwordStatusMessage}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleUpdatePassword} className="space-y-3.5 pt-1">
+          <div className="space-y-1">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              New Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-400 dark:text-slate-500" />
+              <input
+                type={showNewPassword ? "text" : "password"}
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter new password (min. 6 chars)"
+                className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-cyan-500 dark:focus:border-[#00b4d8] focus:ring-1 focus:ring-cyan-500 dark:focus:ring-[#00b4d8] transition-all text-xs font-medium"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((prev) => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors focus:outline-none bg-transparent border-none cursor-pointer flex items-center justify-center"
+                aria-label={showNewPassword ? "Hide password" : "Show password"}
+              >
+                {showNewPassword ? (
+                  <EyeOff className="w-4 h-4 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors" />
+                ) : (
+                  <Eye className="w-4 h-4 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Confirm New Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-400 dark:text-slate-500" />
+              <input
+                type={showConfirmNewPassword ? "text" : "password"}
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter new password"
+                className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-cyan-500 dark:focus:border-[#00b4d8] focus:ring-1 focus:ring-cyan-500 dark:focus:ring-[#00b4d8] transition-all text-xs font-medium"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmNewPassword((prev) => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors focus:outline-none bg-transparent border-none cursor-pointer flex items-center justify-center"
+                aria-label={showConfirmNewPassword ? "Hide password" : "Show password"}
+              >
+                {showConfirmNewPassword ? (
+                  <EyeOff className="w-4 h-4 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors" />
+                ) : (
+                  <Eye className="w-4 h-4 text-slate-400 hover:text-cyan-500 dark:hover:text-[#00b4d8] transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="submit"
+              disabled={updatingPassword || !newPassword}
+              className="bg-slate-900 dark:bg-cyan-950/60 hover:bg-cyan-600 dark:hover:bg-cyan-900/80 border border-slate-700 dark:border-cyan-500/40 text-cyan-400 dark:text-cyan-300 font-bold py-2 px-4 rounded-xl transition-all text-xs uppercase tracking-wider cursor-pointer shadow-sm flex items-center gap-2 select-none active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+            >
+              {updatingPassword ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                  Updating Key...
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-cyan-400" />
+                  Update Password
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
 
       {/* Divider */}
       <div className="w-full border-t border-slate-200 dark:border-slate-800/80 my-5"></div>

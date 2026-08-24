@@ -13,6 +13,8 @@ import GameData from './pages/GameData';
 import { 
   Mail, 
   Lock, 
+  Eye,
+  EyeOff,
   User as UserIcon, 
   Gamepad2, 
   BookOpen, 
@@ -187,6 +189,7 @@ function App() {
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   
   // Registration form state
   const [registerForm, setRegisterForm] = useState({
@@ -198,6 +201,7 @@ function App() {
     inGameName: '',
     primaryGame: 'Valorant'
   });
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   const ESPORTS_CATEGORIES = [
     'SIM RACING',
@@ -437,13 +441,25 @@ function App() {
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
                     <input
-                      type="password"
+                      type={showLoginPassword ? "text" : "password"}
                       required
                       placeholder="••••••••••••"
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
-                      className={inputClass}
+                      className={`${inputClass} pr-11`}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#00b4d8] transition-colors focus:outline-none bg-transparent border-none cursor-pointer flex items-center justify-center"
+                      aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff className="w-4 h-4 text-slate-400 hover:text-[#00b4d8] transition-colors" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-slate-400 hover:text-[#00b4d8] transition-colors" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
@@ -530,14 +546,29 @@ function App() {
 
                 <div className="space-y-1">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="Create a secure password"
-                    value={registerForm.password}
-                    onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
-                    className={inputClass}
-                  />
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                    <input
+                      type={showRegisterPassword ? "text" : "password"}
+                      required
+                      placeholder="Create a secure password"
+                      value={registerForm.password}
+                      onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+                      className={`${inputClass} pr-11`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#00b4d8] transition-colors focus:outline-none bg-transparent border-none cursor-pointer flex items-center justify-center"
+                      aria-label={showRegisterPassword ? "Hide password" : "Show password"}
+                    >
+                      {showRegisterPassword ? (
+                        <EyeOff className="w-4 h-4 text-slate-400 hover:text-[#00b4d8] transition-colors" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-slate-400 hover:text-[#00b4d8] transition-colors" />
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-1">
