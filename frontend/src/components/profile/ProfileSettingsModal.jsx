@@ -71,7 +71,7 @@ export const ProfileSettingsModal = ({ user, onClose, onStartDeletion }) => {
   }
 
   return (
-    <div className="bg-white dark:bg-[#111622] border border-slate-200 dark:border-slate-800 p-8 rounded-xl max-w-2xl w-full text-slate-900 dark:text-slate-200 font-sans shadow-lg dark:shadow-2xl relative overflow-hidden">
+    <div className="bg-white dark:bg-[#111622] border border-slate-200 dark:border-slate-800 p-8 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto text-slate-900 dark:text-slate-200 font-sans shadow-lg dark:shadow-2xl relative">
       {/* Cyan Left Accent Rule */}
       <div className="absolute left-0 top-0 bottom-0 w-1 bg-cyan-500 dark:bg-cyan-400"></div>
 

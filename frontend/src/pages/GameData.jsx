@@ -1099,7 +1099,7 @@ export default function GameData() {
       {/* HIGH-TECH INTERACTIVE BACKDROP HERO BANNER */}
       <div
         onClick={handleNextBanner}
-        className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
+        className="relative w-full min-h-[180px] sm:min-h-[240px] md:min-h-[300px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
       >
         {/* Animated Background Carousel */}
         {GAMEDATA_BANNERS.map((banner, index) => {
@@ -1124,10 +1124,10 @@ export default function GameData() {
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />
 
         {/* Overlay Content */}
-        <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-between pointer-events-none min-h-[320px] md:min-h-[400px]">
+        <div className="relative z-10 h-full p-6 md:p-10 flex flex-col justify-between pointer-events-none min-h-[180px] sm:min-h-[240px] md:min-h-[300px]">
 
           {/* Top Header Badge */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-400 uppercase tracking-widest backdrop-blur-md">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
               TELEMETRY INGESTION & LCC LAB
@@ -1136,7 +1136,7 @@ export default function GameData() {
 
           {/* Main Title & Subtitle */}
           <div className="mt-auto pt-8">
-            <h2 className="text-2xl md:text-4xl font-extrabold text-white tracking-wide uppercase drop-shadow-lg font-sans">
+            <h2 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tight uppercase drop-shadow-lg font-sans">
               Game Data Calibration Engine
             </h2>
             <p className="text-xs md:text-sm text-slate-300 mt-1.5 max-w-xl drop-shadow-md font-mono">
@@ -2600,7 +2600,8 @@ export default function GameData() {
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 overflow-x-auto scrollbar-thin pb-2">
+            <div className="min-w-[700px] flex flex-col space-y-3">
             {cycleMatches.map((log, idx) => {
               if (selectedGame === 'Valorant' || selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
                 const isDota = selectedGame === 'Dota 2';
@@ -2799,6 +2800,7 @@ export default function GameData() {
                 </div>
               );
             })}
+            </div>
           </div>
         )}
       </div>
