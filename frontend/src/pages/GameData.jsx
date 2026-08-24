@@ -57,7 +57,23 @@ export default function GameData() {
       ? profile.esports_titles 
       : (profile?.active_titles?.length ? profile.active_titles : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'])
   ));
-  const [selectedGame, setSelectedGame] = useState('Valorant');
+  const [selectedGame, setSelectedGame] = useState(() => {
+    return localStorage.getItem('grade_gamer_active_game') || 'Valorant';
+  });
+
+  // Update localStorage when user manually switches game tabs inside Game Data
+  const handleGameSwitch = (game) => {
+    setSelectedGame(game);
+    localStorage.setItem('grade_gamer_active_game', game);
+  };
+
+  useEffect(() => {
+    const storedGame = localStorage.getItem('grade_gamer_active_game');
+    if (storedGame && storedGame !== selectedGame) {
+      setSelectedGame(storedGame);
+    }
+  }, []);
+
   const [matchHistory, setMatchHistory] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
@@ -1168,7 +1184,7 @@ export default function GameData() {
         <div className="relative min-w-[220px] sm:w-72">
           <select
             value={selectedGame}
-            onChange={(e) => setSelectedGame(e.target.value)}
+            onChange={(e) => handleGameSwitch(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
             {activeTitles && activeTitles.length > 0 ? (
