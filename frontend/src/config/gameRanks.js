@@ -93,18 +93,6 @@ export const GAME_RANK_CONFIGS = {
       { name: 'Gold / Silver', color: 'text-yellow-400', borderColor: 'border-yellow-500', bgColor: 'bg-yellow-950/30', glowColor: 'rgba(250,204,21,0.2)', percentile: 'Top 50%' },
     ]
   },
-  'Rainbow Six Siege': {
-    unit: 'RP',
-    metricLabel: 'RANKED POINTS',
-    defaultElo: '4,650',
-    ranks: [
-      { name: 'Champions', color: 'text-pink-400', borderColor: 'border-pink-500', bgColor: 'bg-pink-950/50', glowColor: 'rgba(244,114,182,0.4)', percentile: 'Top 0.5%' },
-      { name: 'Diamond', color: 'text-purple-400', borderColor: 'border-purple-500', bgColor: 'bg-purple-950/40', glowColor: 'rgba(192,132,252,0.3)', percentile: 'Top 3%' },
-      { name: 'Emerald', color: 'text-emerald-400', borderColor: 'border-emerald-500', bgColor: 'bg-emerald-950/40', glowColor: 'rgba(52,211,153,0.3)', percentile: 'Top 10%' },
-      { name: 'Platinum', color: 'text-cyan-400', borderColor: 'border-cyan-500', bgColor: 'bg-cyan-950/30', glowColor: 'rgba(6,182,212,0.25)', percentile: 'Top 25%' },
-      { name: 'Gold / Silver', color: 'text-yellow-400', borderColor: 'border-yellow-500', bgColor: 'bg-yellow-950/30', glowColor: 'rgba(250,204,21,0.2)', percentile: 'Mid Bracket' },
-    ]
-  },
   'PUBG': {
     unit: 'RP',
     metricLabel: 'SURVIVAL RATING',

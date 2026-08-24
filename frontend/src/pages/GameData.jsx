@@ -26,12 +26,12 @@ const getTelemetryTable = (gameKey) => {
   if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
   if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
   if (g.includes('apex')) return 'apex_match_telemetry';
+  if (g.includes('f1')) return 'f1_match_telemetry';
   return 'valorant_match_telemetry';
 };
 
 export const MANUAL_GAMES = [
-  'EA FC 27',
-  'Rainbow Six Siege'
+  'EA FC 27'
 ];
 
 // Supabase storage UI bucket reference
@@ -42,6 +42,14 @@ const GAMEDATA_BANNERS = [
   'LOL i.jpg',
   'PUBG ii.jpg',
 ];
+
+const formatLapTime = (sec) => {
+  if (!sec || isNaN(sec)) return '--:--.---';
+  const total = parseFloat(sec);
+  const minutes = Math.floor(total / 60);
+  const remainingSec = (total % 60).toFixed(3);
+  return `${minutes}:${remainingSec < 10 ? '0' : ''}${remainingSec}`;
+};
 
 export default function GameData() {
   const { user, profile } = useAuth();
@@ -306,6 +314,27 @@ export default function GameData() {
       fetchApexTelemetry(uid);
     }
   }, [selectedGame, user?.id, userProfile?.id]);
+
+  // F1 25 Telemetry Fetching & Polling
+  const [f1Data, setF1Data] = useState(null);
+
+  useEffect(() => {
+    if (selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1')) {
+      const fetchF1Telemetry = async () => {
+        try {
+          const res = await fetch('http://localhost:5000/api/f1-telemetry');
+          const data = await res.json();
+          setF1Data(data);
+        } catch (err) {
+          console.error('Error loading F1 telemetry:', err);
+        }
+      };
+
+      fetchF1Telemetry();
+      const interval = setInterval(fetchF1Telemetry, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedGame]);
 
   // Calculate LCC specifically for Apex
   const apexLcc = React.useMemo(() => {
@@ -1124,7 +1153,8 @@ export default function GameData() {
       </div>
 
       {/* CONDITIONAL SINGLE-CHANNEL INGESTION WORKSPACE */}
-      <div className="w-full max-w-4xl mx-auto">
+      {selectedGame !== 'F1 25' && !selectedGame?.toLowerCase().includes('f1') && (
+        <div className="w-full max-w-4xl mx-auto">
         {isAutomated ? (
           /* CHANNEL A: AUTOMATED API & UDP STREAM */
           <div className="p-7 md:p-8 rounded-3xl bg-white dark:bg-[#0b111e] border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.12)] space-y-6">
@@ -1846,23 +1876,12 @@ export default function GameData() {
                       </form>
                     </div>
                   </>
-                ) : (
+                ) : selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1') ? null : (
                   <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
                     <p className="text-xs font-mono text-slate-400">Direct API integration for {selectedGame} is currently under construction. Please use another title.</p>
                   </div>
                 )}
               </div>
-            )}
-
-            {(selectedGame.includes('F1') || selectedGame.includes('Assetto')) && (
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => handleIngestMatch('UDP_TELEMETRY')}
-                className="w-full py-3.5 rounded-xl bg-cyan-400 text-slate-950 font-mono text-xs font-bold uppercase hover:bg-cyan-300 transition-all shadow-[0_0_20px_rgba(6,182,212,0.35)] disabled:opacity-40 cursor-pointer mt-4"
-              >
-                {isSubmitting ? 'INGESTING TELEMETRY PACKET...' : '⚡ INGEST MANUAL SIMULATOR STREAM'}
-              </button>
             )}
 
           </div>
@@ -1947,6 +1966,7 @@ export default function GameData() {
           </div>
         )}
       </div>
+      )}
 
       {/* DATA PIPELINE SECTION */}
       {selectedGame?.toLowerCase().includes('apex') ? (
@@ -2072,6 +2092,119 @@ export default function GameData() {
                 <h5 className="text-xs font-bold text-slate-300 uppercase">No Apex Legends Telemetry Ingested</h5>
                 <p className="text-[10px] text-slate-500 mt-1">
                   Use the Apex Legends ingestion node above to capture your first telemetry data packet.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : selectedGame?.toLowerCase().includes('f1') ? (
+        <div className="bg-[#0b1320] border border-cyan-500/20 rounded-xl p-6 shadow-2xl font-mono">
+          {/* Table Header */}
+          <div className="flex items-center justify-between mb-4 border-b border-cyan-500/10 pb-3">
+            <div>
+              <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-widest block">
+                DATA PIPELINE
+              </span>
+              <h4 className="text-sm font-black text-white uppercase">
+                F1 25 TELEMETRY SESSION PB LOG
+              </h4>
+            </div>
+            <span className="text-xs text-cyan-400 bg-cyan-950/60 px-3 py-1 rounded border border-cyan-500/30">
+              {f1Data?.totalLaps || 0} Sessions Ingested
+            </span>
+          </div>
+
+          {/* Telemetry Row Stream */}
+          <div className="space-y-2.5">
+            {f1Data?.recentMatches && f1Data.recentMatches.length > 0 ? (
+              [...f1Data.recentMatches].reverse().map((m, idx) => {
+                const isBestOverall = parseFloat(m.lapTime) === parseFloat(f1Data.bestLap);
+
+                return (
+                  <div
+                    key={m.id || idx}
+                    className={`bg-[#060a12] border ${
+                      isBestOverall ? 'border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.15)]' : 'border-slate-800'
+                    } hover:border-cyan-500/40 rounded-lg p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all`}
+                  >
+                    {/* LEFT: Track, Weather, Session Laps & Assists */}
+                    <div className="flex items-center gap-4 min-w-[320px]">
+                      <div>
+                        <h5 className="text-xs font-black uppercase text-cyan-400">
+                          SESSION #{f1Data.recentMatches.length - idx}
+                        </h5>
+                        <span className="text-[9px] text-slate-500 block uppercase">
+                          {m.sessionMode}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-sm font-black text-white uppercase tracking-wide">
+                            {m.trackName}
+                          </h4>
+                          <span className="px-1.5 py-0.5 bg-cyan-950 border border-cyan-500/40 text-cyan-300 text-[9px] rounded uppercase font-bold">
+                            {m.tyreCompound}
+                          </span>
+                          <span className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 text-slate-300 text-[9px] rounded font-bold">
+                            {m.weather}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1">
+                          <span>Best of {m.totalSessionLaps || 1} Laps</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-cyan-300">TC: {m.tcMode}</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-cyan-300">ABS: {m.absMode}</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-cyan-300">Gear: {m.gearboxMode}</span>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-slate-500">ID: {String(m.id).slice(0, 8)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT: Fastest Stint Lap Time, Top Speed, Throttle & Rating */}
+                    <div className="flex items-center gap-6 text-right justify-between md:justify-end">
+                      <div>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isBestOverall && (
+                            <span className="px-1.5 py-0.2 bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] rounded font-bold uppercase">
+                              ALL-TIME PB
+                            </span>
+                          )}
+                          <span className="text-sm font-black text-emerald-400">
+                            {formatLapTime(m.lapTime)}
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 uppercase block">FASTEST LAP</span>
+                      </div>
+
+                      <div>
+                        <span className="text-xs font-black text-amber-300">{m.topSpeed} km/h</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">TOP SPEED</span>
+                      </div>
+
+                      <div>
+                        <span className="text-xs font-black text-cyan-300">{m.throttle}%</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">THROTTLE</span>
+                      </div>
+
+                      <div>
+                        <span className="text-xs font-black text-cyan-400">{m.score}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">LCC SCORE</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-10">
+                <span className="text-2xl block mb-2">🏎️</span>
+                <h5 className="text-xs font-bold text-slate-300 uppercase">No F1 25 Sessions Recorded</h5>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Complete a stint in EA Sports F1 25. Personal best laps will stream automatically.
                 </p>
               </div>
             )}

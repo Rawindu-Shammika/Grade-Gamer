@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import dgram from 'node:dgram';
 import { supabase } from './src/config/supabase.js';
 
 dotenv.config();
@@ -908,6 +909,76 @@ app.post('/api/unlink-game', async (req, res) => {
   }
 });
 
+// GET latest F1 25 match telemetry and LCC statistics
+app.get('/api/f1-telemetry', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('f1_match_telemetry')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    if (error) throw error;
+
+    const telemetry = (data || []).reverse();
+
+    if (telemetry.length === 0) {
+      return res.json({
+        totalLaps: 0,
+        bestLap: '0.000',
+        topSpeed: 0,
+        pBaseline: '0.0',
+        pCurrent: '0.0',
+        linearGrowthSlope: '0.00',
+        recentMatches: []
+      });
+    }
+
+    const scores = telemetry.map(t => parseFloat(t.performance_score || 70));
+    const validLapTimes = telemetry.map(t => parseFloat(t.lap_time_seconds)).filter(t => t > 0);
+    const bestLap = validLapTimes.length ? Math.min(...validLapTimes).toFixed(3) : '0.000';
+    const maxSpeed = Math.max(...telemetry.map(t => t.top_speed_kmh || 0));
+
+    // LCC Linear Growth Slope Algorithm (First 3 vs Last 3 Sessions)
+    const initialSamples = scores.slice(0, 3);
+    const recentSamples = scores.slice(-3);
+
+    const pBaseline = (initialSamples.reduce((a, b) => a + b, 0) / initialSamples.length).toFixed(1);
+    const pCurrent = (recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length).toFixed(1);
+    const growthSlope = ((parseFloat(pCurrent) - parseFloat(pBaseline)) / Math.max(1, telemetry.length)).toFixed(2);
+
+    return res.json({
+      totalLaps: telemetry.length,
+      bestLap: parseFloat(bestLap),
+      topSpeed: maxSpeed,
+      pBaseline,
+      pCurrent,
+      linearGrowthSlope: growthSlope,
+      recentMatches: telemetry.map(t => ({
+        id: t.id,
+        lapNumber: t.lap_number,
+        lapTime: t.lap_time_seconds,
+        totalSessionLaps: t.total_session_laps || 1,
+        trackName: t.track_name || 'Red Bull Ring (Austria)',
+        sessionMode: t.session_mode || 'Time Trial',
+        weather: t.weather || 'Clear / Sunny ☀️',
+        tyreCompound: t.tyre_compound || 'SOFT (C5)',
+        tcMode: t.tc_mode || 'Off',
+        absMode: t.abs_mode || 'Off',
+        gearboxMode: t.gearbox_mode || 'Manual',
+        topSpeed: t.top_speed_kmh,
+        throttle: t.avg_throttle,
+        brake: t.avg_brake,
+        score: t.performance_score,
+        createdAt: t.created_at
+      }))
+    });
+  } catch (err) {
+    console.error('[F1 Telemetry Route Error]:', err.message);
+    res.status(500).json({ error: 'Failed to fetch F1 telemetry' });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -919,4 +990,221 @@ app.get('/health', (req, res) => {
 app.listen(port, () => {
   console.log(`[Express API] Server running on http://localhost:${port}`);
 });
+
+// ----------------------------------------------------
+// NATIVE F1 25 UDP TELEMETRY SOCKET LISTENER (PORT 20777)
+// ----------------------------------------------------
+const F1_PORT = 20777;
+const f1Socket = dgram.createSocket('udp4');
+
+const TRACK_MAP = {
+  0: 'Melbourne (Albert Park)',
+  1: 'Paul Ricard',
+  2: 'Shanghai',
+  3: 'Sakhir (Bahrain)',
+  4: 'Barcelona-Catalunya',
+  5: 'Monaco',
+  6: 'Montreal (Gilles Villeneuve)',
+  7: 'Silverstone',
+  8: 'Hockenheim',
+  9: 'Hungaroring',
+  10: 'Spa-Francorchamps',
+  11: 'Monza',
+  12: 'Marina Bay (Singapore)',
+  13: 'Suzuka',
+  14: 'Yas Marina (Abu Dhabi)',
+  15: 'Circuit of the Americas',
+  16: 'Interlagos (Brazil)',
+  17: 'Red Bull Ring (Austria)',
+  18: 'Sochi',
+  19: 'Mexico City',
+  20: 'Baku (Azerbaijan)',
+  26: 'Zandvoort',
+  27: 'Imola',
+  28: 'Portimão',
+  29: 'Jeddah',
+  30: 'Miami',
+  31: 'Las Vegas',
+  32: 'Losail (Qatar)'
+};
+
+const WEATHER_MAP = {
+  0: 'Clear / Sunny ☀️',
+  1: 'Light Cloud 🌤️',
+  2: 'Overcast ☁️',
+  3: 'Light Rain 🌦️',
+  4: 'Heavy Rain 🌧️',
+  5: 'Storm ⛈️'
+};
+
+const TYRE_MAP = {
+  16: 'SOFT (C5)',
+  17: 'MEDIUM (C4)',
+  18: 'HARD (C3)',
+  7: 'INTERMEDIATE',
+  8: 'WET'
+};
+
+// Clean in-memory session buffer
+let sessionData = {
+  trackName: 'Melbourne (Albert Park)',
+  weather: 'Clear / Sunny ☀️',
+  tyreCompound: 'SOFT (C5)',
+  tcMode: 'Off',
+  absMode: 'Off',
+  gearboxMode: 'Manual',
+  laps: [],
+  topSpeed: 0,
+  throttleSamples: [],
+  brakeSamples: [],
+  lastLapTimeMS: 0,
+  lastRecordedLapNum: -1,
+  isCommitting: false
+};
+
+let sessionInactivityTimer = null;
+
+async function finalizeSessionStint() {
+  if (sessionData.isCommitting || !sessionData.laps.length) return;
+  sessionData.isCommitting = true;
+
+  const validLaps = sessionData.laps.filter(t => t > 10.0);
+  if (!validLaps.length) {
+    sessionData.isCommitting = false;
+    return;
+  }
+
+  const bestLapTime = Math.min(...validLaps);
+  const bestLapIndex = validLaps.indexOf(bestLapTime) + 1;
+  const totalLapsDriven = validLaps.length;
+  const topSpeed = sessionData.topSpeed || 295;
+
+  const avgThrottle = sessionData.throttleSamples.length
+    ? ((sessionData.throttleSamples.reduce((a, b) => a + b, 0) / sessionData.throttleSamples.length) * 100).toFixed(1)
+    : 82.5;
+  const avgBrake = sessionData.brakeSamples.length
+    ? ((sessionData.brakeSamples.reduce((a, b) => a + b, 0) / sessionData.brakeSamples.length) * 100).toFixed(1)
+    : 14.0;
+
+  const perfScore = Math.min(99.0, Math.max(70.0, 100 - (bestLapTime - 65) * 2)).toFixed(1);
+
+  console.log(
+    `\x1b[32m[F1 Lap Ingested]\x1b[0m Lap ${bestLapIndex}: ${bestLapTime}s | Track: ${sessionData.trackName} | Mode: Time Trial | Weather: ${sessionData.weather} | Tyre: ${sessionData.tyreCompound} | TC: ${sessionData.tcMode} | ABS: ${sessionData.absMode} | Gear: ${sessionData.gearboxMode} (Best of ${totalLapsDriven} laps)`
+  );
+
+  try {
+    await supabase.from('f1_match_telemetry').insert([{
+      lap_number: bestLapIndex,
+      lap_time_seconds: bestLapTime,
+      total_session_laps: totalLapsDriven,
+      top_speed_kmh: topSpeed,
+      avg_throttle: parseFloat(avgThrottle),
+      avg_brake: parseFloat(avgBrake),
+      performance_score: parseFloat(perfScore),
+      track_name: sessionData.trackName,
+      session_mode: 'Time Trial Stint',
+      weather: sessionData.weather,
+      tyre_compound: sessionData.tyreCompound,
+      tc_mode: sessionData.tcMode,
+      abs_mode: sessionData.absMode,
+      gearbox_mode: sessionData.gearboxMode,
+      driver_name: 'Driver'
+    }]);
+  } catch (err) {
+    console.error('[Supabase Save Exception]:', err.message);
+  }
+
+  // Reset buffer for fresh stint
+  sessionData.laps = [];
+  sessionData.topSpeed = 0;
+  sessionData.throttleSamples = [];
+  sessionData.brakeSamples = [];
+  sessionData.lastLapTimeMS = 0;
+  sessionData.lastRecordedLapNum = -1;
+  sessionData.isCommitting = false;
+}
+
+f1Socket.on('listening', () => {
+  const addr = f1Socket.address();
+  console.log(`\x1b[36m[GradeGamer F1 Stint Engine]\x1b[0m Active on 0.0.0.0:${addr.port}`);
+});
+
+f1Socket.on('message', async (msg) => {
+  if (msg.length < 24) return;
+
+  const packetId = msg.readUInt8(6);
+  const playerCarIndex = msg.length >= 28 ? msg.readUInt8(27) : 0;
+
+  // Session timer reset: Finalizes stint 8s after you stop driving / exit to menu
+  if (sessionInactivityTimer) clearTimeout(sessionInactivityTimer);
+  sessionInactivityTimer = setTimeout(() => {
+    finalizeSessionStint();
+  }, 8000);
+
+  // 1. SESSION PACKET (Packet ID 1) -> Track, Weather, Assists
+  if (packetId === 1 && msg.length >= 55) {
+    const weatherId = msg.readUInt8(29);
+    const trackId = msg.readInt8(36);
+    const gearboxByte = msg.readUInt8(45);
+    const absByte = msg.readUInt8(53);
+    const tcByte = msg.readUInt8(54);
+
+    if (WEATHER_MAP[weatherId]) sessionData.weather = WEATHER_MAP[weatherId];
+    if (TRACK_MAP[trackId]) sessionData.trackName = TRACK_MAP[trackId];
+    sessionData.gearboxMode = gearboxByte === 3 ? 'Auto' : 'Manual';
+    sessionData.absMode = absByte === 1 ? 'On' : 'Off';
+    sessionData.tcMode = tcByte === 0 ? 'Off' : tcByte === 1 ? 'Medium' : 'Full';
+  }
+
+  // 2. CAR STATUS (Packet ID 7) -> Tyre Compound
+  if (packetId === 7) {
+    const carOffset = 29 + (playerCarIndex * 45);
+    if (msg.length >= carOffset + 27) {
+      const visualTyre = msg.readUInt8(carOffset + 26);
+      if (TYRE_MAP[visualTyre]) sessionData.tyreCompound = TYRE_MAP[visualTyre];
+    }
+  }
+
+  // 3. CAR TELEMETRY (Packet ID 6) -> Speed, Throttle, Brake
+  if (packetId === 6 && msg.length >= 29 + (playerCarIndex + 1) * 50) {
+    const carOffset = 29 + (playerCarIndex * 60);
+    const speed = msg.readUInt16LE(carOffset);
+    const throttle = msg.readFloatLE(carOffset + 2);
+    const brake = msg.readFloatLE(carOffset + 6);
+
+    if (speed > sessionData.topSpeed) sessionData.topSpeed = speed;
+    sessionData.throttleSamples.push(throttle);
+    sessionData.brakeSamples.push(brake);
+  }
+
+  // 4. LAP DATA (Packet ID 2) -> Record Laps to Memory
+  if (packetId === 2) {
+    const lapOffset = 29 + (playerCarIndex * 57);
+    if (msg.length >= lapOffset + 18) {
+      const lastLapTimeInMS = msg.readUInt32LE(lapOffset + 0);
+      const lapDistance = msg.readFloatLE(lapOffset + 8);
+      const currentLapNum = msg.readUInt8(lapOffset + 14);
+
+      if (
+        lastLapTimeInMS > 10000 &&
+        lastLapTimeInMS !== sessionData.lastLapTimeMS &&
+        (currentLapNum !== sessionData.lastRecordedLapNum || (lapDistance >= 0 && lapDistance < 100))
+      ) {
+        sessionData.lastLapTimeMS = lastLapTimeInMS;
+        sessionData.lastRecordedLapNum = currentLapNum;
+
+        const lapSec = parseFloat((lastLapTimeInMS / 1000).toFixed(3));
+        sessionData.laps.push(lapSec);
+
+        console.log(`\x1b[36m[Lap Added to Stint]\x1b[0m Lap #${sessionData.laps.length}: ${lapSec}s | Current Session Best: ${Math.min(...sessionData.laps)}s`);
+      }
+    }
+  }
+});
+
+try {
+  f1Socket.bind(F1_PORT);
+} catch (err) {
+  console.error('[F1 Socket Bind Error]:', err.message);
+}
 

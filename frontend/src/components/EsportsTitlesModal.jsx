@@ -3,7 +3,7 @@ import { supabase } from '../services/supabaseClient';
 
 export const ALL_ESPORTS_TITLES = [
   { category: 'SIM RACING', titles: ['Assetto Corsa', 'F1 25'] },
-  { category: 'FPS SHOOTERS', titles: ['Valorant', 'Counter-Strike 2', 'Apex Legends', 'Rainbow Six Siege'] },
+  { category: 'FPS SHOOTERS', titles: ['Valorant', 'Counter-Strike 2', 'Apex Legends'] },
   { category: 'MOBA', titles: ['Dota 2', 'League of Legends'] },
   { category: 'SPORTS & OTHERS', titles: ['PUBG', 'EA FC 27'] },
 ];
