@@ -6,6 +6,7 @@ import { fetchCurrentValorantAct } from '../../utils/valorantActService';
 import { applyGlobalActReset } from '../../utils/actDataSync';
 import { getDotaHeroName } from '../../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../../utils/dotaStats';
+import { getUiImageUrl } from '../../utils/supabaseAssets';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -34,8 +35,6 @@ const formatLapTime = (sec) => {
   const remainingSec = (total % 60).toFixed(3);
   return `${minutes}:${remainingSec < 10 ? '0' : ''}${remainingSec}`;
 };
-
-const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
 
 // Only using the 2 requested images
 const DASHBOARD_BANNERS = [
@@ -686,7 +685,7 @@ export const HomeDashboard = () => {
               index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
             }`}
             style={{
-              backgroundImage: `url(${SUPABASE_UI_BASE}/${encodeURIComponent(banner)})`,
+              backgroundImage: `url(${getUiImageUrl(banner)})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center top 15%',
             }}
