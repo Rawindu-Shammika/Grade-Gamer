@@ -15,6 +15,8 @@ export const calculateLCCMetrics = (matchesList = []) => {
 
   // Robust ACS Extractor
   const extractACS = (m) => {
+    if (m.gpm !== undefined && m.gpm !== null && !isNaN(Number(m.gpm))) return Number(m.gpm);
+    if (m.metrics_payload?.gpm !== undefined && m.metrics_payload?.gpm !== null && !isNaN(Number(m.metrics_payload.gpm))) return Number(m.metrics_payload.gpm);
     if (m.acs !== undefined && m.acs !== null && !isNaN(Number(m.acs))) return Number(m.acs);
     if (m.metrics_payload?.acs !== undefined && m.metrics_payload?.acs !== null && !isNaN(Number(m.metrics_payload.acs))) return Number(m.metrics_payload.acs);
     if (m.combat_score !== undefined && !isNaN(Number(m.combat_score))) return Number(m.combat_score);

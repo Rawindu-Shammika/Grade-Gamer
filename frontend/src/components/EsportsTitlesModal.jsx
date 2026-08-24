@@ -3,7 +3,7 @@ import { supabase } from '../services/supabaseClient';
 
 export const ALL_ESPORTS_TITLES = [
   { category: 'SIM RACING', titles: ['Assetto Corsa', 'F1 25'] },
-  { category: 'FPS SHOOTERS', titles: ['Valorant', 'Counter-Strike 2', 'Apex Legends', 'Rainbow Six Siege'] },
+  { category: 'FPS SHOOTERS', titles: ['Valorant', 'Counter-Strike 2', 'Apex Legends'] },
   { category: 'MOBA', titles: ['Dota 2', 'League of Legends'] },
   { category: 'SPORTS & OTHERS', titles: ['PUBG', 'EA FC 27'] },
 ];
@@ -44,28 +44,41 @@ export default function EsportsTitlesModal({
   };
 
   const handleSave = async () => {
-    if (selectedTitles.length === 0) {
+    if (!userId) return;
+    if (!selectedTitles || selectedTitles.length === 0) {
       alert('Please select at least one game title.');
       return;
     }
 
     setSaving(true);
     try {
+      // 1. Ensure clean array format
+      const titlesArray = Array.isArray(selectedTitles) ? selectedTitles : [];
+
+      // 2. Persist to profiles
       const { error } = await supabase
         .from('profiles')
         .update({
-          esports_titles: selectedTitles,
-          primary_game: selectedTitles[0] || 'Valorant',
+          active_titles: titlesArray,
+          esports_titles: titlesArray,
+          primary_game: titlesArray[0] || 'Valorant',
         })
         .eq('id', userId);
 
       if (error) throw error;
 
-      if (onSaved) onSaved(selectedTitles);
-      onClose();
+      // 3. Broadcast instant update to all pages
+      window.dispatchEvent(
+        new CustomEvent('gg_titles_updated', {
+          detail: { activeTitles: titlesArray, esports_titles: titlesArray }
+        })
+      );
+
+      if (typeof onSaved === 'function') onSaved(titlesArray);
+      if (typeof onClose === 'function') onClose();
     } catch (err) {
-      console.error('Failed to update esports titles:', err);
-      alert('Failed to save titles: ' + err.message);
+      console.error('[Save Titles Error]:', err.message || err);
+      alert(`Failed to save titles: ${err.message || err}`);
     } finally {
       setSaving(false);
     }

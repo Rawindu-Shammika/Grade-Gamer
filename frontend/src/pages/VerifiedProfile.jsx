@@ -7,6 +7,12 @@ import { VerifiedResumeCard } from '../components/resume/VerifiedResumeCard';
 import { supabase } from '../services/supabaseClient';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import { ResumePDFDocument } from '../components/ResumePDFDocument';
+import { AtsResumeDocument } from '../components/resume/AtsResumeDocument';
+import { calculateLCCMetrics } from '../utils/lccCalculator';
+import { calculateDotaLinearGrowth } from '../utils/dotaStats';
+import { fetchCurrentValorantAct } from '../utils/valorantActService';
+import { applyGlobalActReset } from '../utils/actDataSync';
+import { useMemo } from 'react';
 
 // Supabase storage UI bucket reference
 const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
@@ -103,6 +109,224 @@ export const VerifiedProfile = () => {
   const handleNextBanner = useCallback(() => {
     setBannerIndex((prev) => (prev + 1) % RESUME_BANNERS.length);
   }, []);
+
+  const [evaluations, setEvaluations] = useState([]);
+  const [actInfo, setActInfo] = useState(null);
+  const [gameStats, setGameStats] = useState({
+    valorant: { hours: 0, slope: 0, matches: 0 },
+    cs2: { hours: 0, slope: 0, matches: 0 },
+    assettoCorsa: { hours: 0, slope: 0, matches: 0 },
+    f1_25: { hours: 0, slope: 0, matches: 0 },
+  });
+
+  useEffect(() => {
+    fetchCurrentValorantAct().then((data) => setActInfo(data));
+  }, []);
+
+  useEffect(() => {
+    const fetchPeerMetrics = async () => {
+      try {
+        const targetUserId = profile?.id || user?.id;
+        if (!targetUserId) return;
+
+        const { data: reviews, error } = await supabase
+          .from('peer_reviews')
+          .select('communication_rating, teamplay_rating, mechanical_rating, leadership_rating, overall_rating')
+          .eq('target_user_id', targetUserId)
+          .order('created_at', { ascending: false })
+          .limit(15);
+
+        if (!error && reviews) {
+          setEvaluations(reviews);
+        }
+      } catch (err) {
+        console.error('Error fetching resume peer ratings:', err);
+      }
+    };
+
+    fetchPeerMetrics();
+  }, [profile?.id, user?.id]);
+
+  useEffect(() => {
+    const fetchTelemetryStats = async () => {
+      try {
+        const targetUserId = profile?.id || user?.id;
+        if (!targetUserId) return;
+
+        // Fetch Valorant matches
+        const { data: valMatches } = await supabase
+          .from('valorant_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .eq('game_title', 'Valorant')
+          .order('created_at', { ascending: true });
+
+        // Fetch Dota 2 matches
+        const { data: dotaMatches } = await supabase
+          .from('dota2_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
+        // Fetch League of Legends matches
+        const { data: lolMatches } = await supabase
+          .from('lol_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
+        // Fetch CS2 matches
+        const { data: cs2Matches } = await supabase
+          .from('cs2_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
+
+        // Fetch other games matches
+        const { data: otherMatches } = await supabase
+          .from('game_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('match_date', { ascending: true });
+
+        const stats = {
+          valorant: { hours: 0, slope: 0, matches: 0 },
+          dota2: { hours: 0, slope: 0, matches: 0 },
+          league_of_legends: { hours: 0, slope: 0, matches: 0 },
+          lol: { hours: 0, slope: 0, matches: 0 },
+          cs2: { hours: 0, slope: 0, matches: 0 },
+          assettoCorsa: { hours: 0, slope: 0, matches: 0 },
+          f1_25: { hours: 0, slope: 0, matches: 0 },
+        };
+
+        const processGameMatches = (matchesList, gameKey) => {
+          if (!matchesList || matchesList.length === 0) return;
+
+          let filteredList = matchesList;
+          if (gameKey === 'valorant') {
+            filteredList = matchesList.filter((match) => {
+              const mode = String(
+                match.metrics_payload?.mode ||
+                match.metrics_payload?.queue ||
+                match.metadata?.mode ||
+                match.metadata?.queue ||
+                match.mode ||
+                match.game_mode ||
+                ''
+              ).toLowerCase();
+
+              return (
+                (mode === 'competitive' || mode === 'comp') &&
+                !mode.includes('deathmatch') &&
+                !mode.includes('escalation') &&
+                !mode.includes('spikerush')
+              );
+            });
+            filteredList = applyGlobalActReset(filteredList, 'Valorant', actInfo);
+          }
+
+          const count = filteredList.length;
+          if (count === 0) return;
+
+          const totalSeconds = filteredList.reduce((acc, m) => {
+            const payload = m.metrics_payload || m;
+            const duration =
+              payload.game_length_in_seconds ||
+              payload.duration_seconds ||
+              (payload.duration_ms ? payload.duration_ms / 1000 : 0) ||
+              ((Number(payload.rounds_won || 0) + Number(payload.rounds_lost || 0)) * 105) ||
+              2100;
+            return acc + duration;
+          }, 0);
+          const hours = totalSeconds / 3600;
+
+          const lcc = (gameKey === 'dota2' || gameKey === 'league_of_legends' || gameKey === 'lol' || gameKey === 'cs2')
+            ? calculateDotaLinearGrowth(filteredList)
+            : calculateLCCMetrics(filteredList);
+
+          stats[gameKey] = {
+            hours: parseFloat(hours.toFixed(1)),
+            slope: (gameKey === 'dota2' || gameKey === 'league_of_legends' || gameKey === 'lol' || gameKey === 'cs2') ? lcc.slope : lcc.slopeNumeric,
+            matches: count,
+          };
+        };
+
+        processGameMatches(valMatches, 'valorant');
+        processGameMatches(dotaMatches, 'dota2');
+        processGameMatches(lolMatches, 'league_of_legends');
+
+        const matchesByGame = {};
+        if (otherMatches) {
+          otherMatches.forEach((m) => {
+            const title = m.game_title || '';
+            if (!matchesByGame[title]) matchesByGame[title] = [];
+            matchesByGame[title].push(m);
+          });
+        }
+
+        processGameMatches(cs2Matches && cs2Matches.length > 0 ? cs2Matches : matchesByGame['Counter-Strike 2'], 'cs2');
+        processGameMatches(matchesByGame['Assetto Corsa'], 'assettoCorsa');
+        processGameMatches(matchesByGame['F1 25'], 'f1_25');
+
+        setGameStats(stats);
+      } catch (err) {
+        console.error('Error fetching telemetry stats:', err);
+      }
+    };
+
+    fetchTelemetryStats();
+  }, [profile?.id, user?.id, actInfo]);
+
+  const peerEvaluations = useMemo(() => {
+    if (!evaluations || evaluations.length === 0) {
+      return {
+        communication: 4.0,
+        teamplay: 3.0,
+        mechanical: 5.0,
+        leadership: null,
+        composite: 4.0,
+      };
+    }
+
+    let totalComm = 0;
+    let totalTeam = 0;
+    let totalMech = 0;
+    let totalLead = 0;
+    let leadCount = 0;
+
+    evaluations.forEach((item) => {
+      totalComm += Number(item.communication_score || item.communication || item.communication_rating || 0);
+      totalTeam += Number(item.teamplay_score || item.teamplay || item.teamplay_rating || 0);
+      totalMech += Number(item.mechanical_score || item.mechanical || item.mechanical_rating || 0);
+
+      const leadershipScore = item.leadership_score || item.leadership || item.shotcalling_score || item.leadership_rating;
+      if (leadershipScore !== undefined && leadershipScore !== null && Number(leadershipScore) > 0) {
+        totalLead += Number(leadershipScore);
+        leadCount += 1;
+      }
+    });
+
+    const count = evaluations.length;
+    const avgComm = parseFloat((totalComm / count).toFixed(1));
+    const avgTeam = parseFloat((totalTeam / count).toFixed(1));
+    const avgMech = parseFloat((totalMech / count).toFixed(1));
+    const avgLead = leadCount > 0 ? parseFloat((totalLead / leadCount).toFixed(1)) : null;
+
+    const baseMetrics = [avgComm, avgTeam, avgMech];
+    if (avgLead !== null) baseMetrics.push(avgLead);
+
+    const composite = parseFloat(
+      (baseMetrics.reduce((sum, val) => sum + val, 0) / baseMetrics.length).toFixed(1)
+    );
+
+    return {
+      communication: avgComm,
+      teamplay: avgTeam,
+      mechanical: avgMech,
+      leadership: avgLead,
+      composite,
+    };
+  }, [evaluations]);
 
   const [profileSettings, setProfileSettings] = useState({
     platform_id: '',
@@ -264,7 +488,19 @@ export const VerifiedProfile = () => {
         </button>
 
         <PDFDownloadLink
-          document={<ResumePDFDocument selectedGame={profile?.esports_titles?.[0] || 'VALORANT'} skillData={{}} userData={{...user, ...profile, fullName: profile?.full_name || user?.user_metadata?.full_name, ign: profile?.ign}} />}
+          document={
+            <ResumePDFDocument
+              profile={{ ...user, ...profile, full_name: profile?.full_name || user?.user_metadata?.full_name, valorant_ign: profile?.in_game_name || profile?.valorant_ign || profile?.ign, primary_game: profile?.primary_game || 'Valorant', gradegamer_id: profile?.platform_id || profile?.gradegamer_id }}
+              gameStats={gameStats}
+              peerEvaluations={peerEvaluations}
+              tournaments={tournaments}
+              education={education}
+              techStack={techStack}
+              softSkills={softSkills}
+              verificationHash={resumeData?.verifiedHash || '0x77FA...3184'}
+              sha256Id={resumeData?.sha256Authenticity || '31f9d50105120593efbb5ea7e31c890...'}
+            />
+          }
           fileName={`GradeGamer_ATS_Resume_${profile?.full_name || 'Export'}.pdf`}
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-mono font-bold text-xs uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer"
         >
@@ -288,14 +524,64 @@ export const VerifiedProfile = () => {
         </button>
       </div>
 
+      {/* Styles for print override */}
+      <style>{`
+        @media print {
+          body, html {
+            background: #ffffff !important;
+            color: #0f172a !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print-hide {
+            display: none !important;
+          }
+          #print-resume-target {
+            display: none !important;
+          }
+          #printable-ats-resume {
+            display: block !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+        }
+      `}</style>
+
       {/* Resume Card template */}
-      <VerifiedResumeCard
-        resumeData={resumeData}
-        tournaments={tournaments}
-        education={education}
-        techStack={techStack}
-        softSkills={softSkills}
-      />
+      <div id="print-resume-target">
+        <VerifiedResumeCard
+          resumeData={resumeData}
+          tournaments={tournaments}
+          education={education}
+          techStack={techStack}
+          softSkills={softSkills}
+          gameStats={gameStats}
+          evaluations={evaluations}
+        />
+      </div>
+
+      {/* ATS Resume View & Print Preview (collapsible/visible at bottom) */}
+      <div className="mt-12 pt-8 border-t border-slate-800/80 print-hide">
+        <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          ATS / Print Preview Layout
+        </h3>
+        <AtsResumeDocument
+          profile={{ ...user, ...profile, full_name: profile?.full_name || profile?.username || user?.user_metadata?.full_name || 'BUDHDHIKA JAYATHILAKA', valorant_ign: profile?.in_game_name || profile?.valorant_ign || profile?.ign, primary_game: profile?.primary_game || 'Valorant', gradegamer_id: profile?.platform_id || profile?.gradegamer_id }}
+          gameStats={gameStats}
+          peerEvaluations={peerEvaluations}
+          tournaments={tournaments}
+          education={education}
+          techStack={techStack}
+          softSkills={softSkills}
+          verificationHash={resumeData?.verifiedHash || '0x77FA...3184'}
+          sha256Id={resumeData?.sha256Authenticity || '31f9d50105120593efbb5ea7e31c890...'}
+        />
+      </div>
 
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 dark:bg-slate-950/85 backdrop-blur-md animate-in fade-in">

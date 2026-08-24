@@ -4,6 +4,8 @@ import useAuth from "../../hooks/useAuth";
 import { calculateLCCMetrics } from '../../utils/lccCalculator';
 import { fetchCurrentValorantAct } from '../../utils/valorantActService';
 import { applyGlobalActReset } from '../../utils/actDataSync';
+import { getDotaHeroName } from '../../utils/dotaHeroes';
+import { calculateDotaLinearGrowth } from '../../utils/dotaStats';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -25,6 +27,14 @@ const SUPPORTED_GAMES = [
   { id: 'Dota 2', name: 'DOTA 2' },
 ];
 
+const formatLapTime = (sec) => {
+  if (!sec || isNaN(sec)) return '--:--.---';
+  const total = parseFloat(sec);
+  const minutes = Math.floor(total / 60);
+  const remainingSec = (total % 60).toFixed(3);
+  return `${minutes}:${remainingSec < 10 ? '0' : ''}${remainingSec}`;
+};
+
 const SUPABASE_UI_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/UI`;
 
 // Only using the 2 requested images
@@ -37,6 +47,34 @@ const DASHBOARD_BANNERS = [
 const getRankTheme = (tierName) => {
   const rank = String(tierName || '').toUpperCase();
 
+  if (rank.includes('HERALD') || rank.includes('GUARDIAN')) {
+    return { 
+      text: 'text-stone-400', 
+      boxBorder: 'border-stone-500/30',
+      dot: 'bg-stone-400 shadow-[0_0_10px_rgba(168,162,158,0.8)]' 
+    };
+  }
+  if (rank.includes('CRUSADER') || rank.includes('ARCHON')) {
+    return { 
+      text: 'text-cyan-400', 
+      boxBorder: 'border-cyan-500/30',
+      dot: 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]' 
+    };
+  }
+  if (rank.includes('LEGEND')) {
+    return { 
+      text: 'text-yellow-400', 
+      boxBorder: 'border-yellow-500/30',
+      dot: 'bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.85)]' 
+    };
+  }
+  if (rank.includes('ANCIENT') || rank.includes('DIVINE')) {
+    return { 
+      text: 'text-purple-450 dark:text-purple-400', 
+      boxBorder: 'border-purple-500/30',
+      dot: 'bg-purple-400 shadow-[0_0_12px_rgba(192,132,252,0.85)]' 
+    };
+  }
   if (rank.includes('IRON')) {
     return { 
       text: 'text-stone-400', 
@@ -108,12 +146,49 @@ const getRankTheme = (tierName) => {
   };
 };
 
+const getTelemetryTable = (gameKey) => {
+  const g = (gameKey || '').toLowerCase();
+  if (g.includes('dota')) return 'dota2_match_telemetry';
+  if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
+  if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  if (g.includes('apex')) return 'apex_match_telemetry';
+  if (g.includes('f1')) return 'f1_match_telemetry';
+  return 'valorant_match_telemetry';
+};
+
 export const HomeDashboard = () => {
   const { user, profile } = useAuth();
-  const registeredTitles = profile?.esports_titles?.length ? profile.esports_titles : ['Valorant'];
+  const [activeTitles, setActiveTitles] = useState(() => (
+    profile?.esports_titles?.length 
+      ? profile.esports_titles 
+      : (profile?.active_titles?.length ? profile.active_titles : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'])
+  ));
 
   const [selectedGame, setSelectedGame] = useState('Valorant');
   const [actInfo, setActInfo] = useState(null);
+
+  useEffect(() => {
+    if (profile?.esports_titles?.length) {
+      setActiveTitles(profile.esports_titles);
+    } else if (profile?.active_titles?.length) {
+      setActiveTitles(profile.active_titles);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    const handleTitlesSync = (e) => {
+      const updated = e.detail?.activeTitles || e.detail?.esports_titles;
+      if (updated && Array.isArray(updated) && updated.length > 0) {
+        setActiveTitles(updated);
+        if (selectedGame && !updated.includes(selectedGame)) {
+          setSelectedGame(updated[0]);
+        }
+      }
+    };
+
+    window.addEventListener('gg_titles_updated', handleTitlesSync);
+    return () => window.removeEventListener('gg_titles_updated', handleTitlesSync);
+  }, [selectedGame]);
 
   useEffect(() => {
     if (String(selectedGame || '').toLowerCase().includes('val')) {
@@ -122,13 +197,62 @@ export const HomeDashboard = () => {
   }, [selectedGame]);
 
   useEffect(() => {
-    if (registeredTitles.length > 0 && !registeredTitles.includes(selectedGame)) {
-      setSelectedGame(registeredTitles[0]);
+    if (activeTitles.length > 0 && !activeTitles.includes(selectedGame)) {
+      setSelectedGame(activeTitles[0]);
     }
-  }, [registeredTitles, selectedGame]);
+  }, [activeTitles, selectedGame]);
   const [valorantMatches, setValorantMatches] = useState([]);
   const [boundHandle, setBoundHandle] = useState('UNLINKED');
   const [loading, setLoading] = useState(true);
+
+  // F1 25 Telemetry Fetching & Polling
+  const [f1Data, setF1Data] = useState(null);
+
+  // EA FC 27 Telemetry Fetching
+  const [fcMatches, setFcMatches] = useState([]);
+  const isFcSelected = selectedGame === 'EA FC 27' || String(selectedGame || '').toLowerCase().includes('fc') || String(selectedGame || '').toLowerCase().includes('fifa');
+
+  useEffect(() => {
+    if (isFcSelected && user?.id) {
+      const fetchFcMatches = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('fc27_match_telemetry')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: true });
+
+          if (!error && data) {
+            setFcMatches(data);
+          } else {
+            setFcMatches([]);
+          }
+        } catch (err) {
+          console.error('Error loading FC 27 matches:', err);
+        }
+      };
+
+      fetchFcMatches();
+    }
+  }, [isFcSelected, user?.id]);
+
+  useEffect(() => {
+    if (selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1')) {
+      const fetchF1Telemetry = async () => {
+        try {
+          const res = await fetch('http://localhost:5000/api/f1-telemetry');
+          const data = await res.json();
+          setF1Data(data);
+        } catch (err) {
+          console.error('Error loading F1 telemetry:', err);
+        }
+      };
+
+      fetchF1Telemetry();
+      const interval = setInterval(fetchF1Telemetry, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedGame]);
 
   // 2. Carousel State & Auto-Rotate Handler
   const [bannerIndex, setBannerIndex] = useState(0);
@@ -251,29 +375,43 @@ export const HomeDashboard = () => {
 
       try {
         // Fetch profile handle
-        const { data: profile } = await supabase
+        const { data: userProfileData } = await supabase
           .from('profiles')
-          .select('valorant_ign, valorant_tag')
+          .select('*, valorant_id, lol_riot_id, lol_puuid, dota2_steam_id, cs2_steam_id')
           .eq('id', user.id)
           .maybeSingle();
 
-        if (isMounted && profile?.valorant_ign) {
-          setBoundHandle(`${profile.valorant_ign}#${profile.valorant_tag || ''}`);
+        const p = userProfileData || profile || {};
+
+        if (isMounted) {
+          if (selectedGame === 'Dota 2' && (p.dota2_steam_id || p.steam_id)) {
+            setBoundHandle(`STEAM ID: ${p.dota2_steam_id || p.steam_id}`);
+          } else if (selectedGame === 'Counter-Strike 2' && (p.cs2_steam_id || p.steam_id)) {
+            setBoundHandle(`STEAM ID: ${p.cs2_steam_id || p.steam_id}`);
+          } else if (selectedGame === 'League of Legends' && (p.lol_riot_id || p.lol_puuid)) {
+            setBoundHandle(p.lol_riot_id ? `${p.lol_riot_id}` : `RIOT PUUID: ${p.lol_puuid.slice(0, 10)}...`);
+          } else if (selectedGame === 'Apex Legends' && p.apex_player_id) {
+            setBoundHandle(`APEX ID: ${p.apex_player_id}`);
+          } else if (p.valorant_id || (p.valorant_ign && p.valorant_tag)) {
+            setBoundHandle(p.valorant_id || `${p.valorant_ign}#${p.valorant_tag || ''}`);
+          } else {
+            setBoundHandle('UNLINKED');
+          }
         }
 
         // Fetch matches from telemetry table dynamically
-        const tableName = selectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'game_match_telemetry';
+        const tableName = getTelemetryTable(selectedGame);
         let query = supabase
           .from(tableName)
           .select('*')
           .eq('user_id', user.id);
           
-        if (selectedGame !== 'Valorant') {
+        if (tableName === 'game_match_telemetry') {
           query = query.eq('game_title', selectedGame);
         }
 
         const { data: matches, error } = await query.order(
-          selectedGame === 'Valorant' ? 'created_at' : 'match_date', 
+          tableName === 'game_match_telemetry' ? 'match_date' : 'created_at', 
           { ascending: false }
         );
 
@@ -318,17 +456,85 @@ export const HomeDashboard = () => {
   const latestRecord = totalMatchesCount > 0 ? valorantMatches[0] : null;
   const payload = latestRecord?.metrics_payload || latestRecord || {};
 
-  const liveRank = payload?.rank || payload?.rank_tier || (totalMatchesCount > 0 ? 'Diamond 3' : 'Unrated');
+  const liveRank = useMemo(() => {
+    if (isFcSelected) {
+      const latestFc = fcMatches.length > 0 ? fcMatches[fcMatches.length - 1] : null;
+      const p = latestFc?.metrics_payload || latestFc || {};
+      return (p.division || profile?.fc27_division || 'ELITE DIVISION').toUpperCase();
+    }
+    if (selectedGame === 'F1 25') {
+      return f1Data?.bestLap ? `BEST LAP: ${f1Data.bestLap}s` : 'CALIBRATING';
+    }
+    if (selectedGame === 'Dota 2') {
+      return payload?.competitive_rank || profile?.dota2_rank || 'UNRATED';
+    }
+    if (selectedGame === 'League of Legends') {
+      return payload?.competitive_rank || profile?.lol_rank || 'UNRATED';
+    }
+    if (selectedGame === 'Counter-Strike 2') {
+      return payload?.competitive_rank || profile?.cs2_rank || 'GLOBAL ELITE';
+    }
+    if (selectedGame === 'Apex Legends') {
+      return payload?.rank || profile?.apex_rank || 'DIAMOND IV';
+    }
+    return payload?.rank || 'UNRATED';
+  }, [isFcSelected, fcMatches, selectedGame, payload, profile, f1Data]);
+
   const liveRR = payload?.elo ?? payload?.rank_rating ?? 0;
 
   const activeDashboardMatches = useMemo(() => {
     return applyGlobalActReset(valorantMatches || [], selectedGame, actInfo);
   }, [valorantMatches, selectedGame, actInfo]);
 
-  const dashLCC = React.useMemo(() => calculateLCCMetrics([...(activeDashboardMatches || [])].reverse()), [activeDashboardMatches]);
+  const dashLCC = React.useMemo(() => {
+    if (isFcSelected) {
+      if (!fcMatches || fcMatches.length === 0) {
+        return { slopeNumeric: 0, slope: '0.00' };
+      }
+      const sorted = [...fcMatches].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const windowSize = Math.min(5, sorted.length);
+      const initial = sorted.slice(0, windowSize);
+      const recent = sorted.slice(-windowSize);
+
+      const baseline = initial.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / Math.max(1, initial.length);
+      const current = recent.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / Math.max(1, recent.length);
+      const n = sorted.length;
+      const slopeVal = ((current - baseline) / Math.max(1, n));
+      const slopeStr = slopeVal > 0 ? `+${slopeVal.toFixed(2)}` : slopeVal.toFixed(2);
+
+      return { slopeNumeric: slopeVal, slope: slopeStr };
+    }
+    if (selectedGame === 'F1 25' && f1Data) {
+      return {
+        slopeNumeric: f1Data.linearGrowthSlope || 0,
+        slope: f1Data.linearGrowthSlope > 0 ? `+${f1Data.linearGrowthSlope}` : String(f1Data.linearGrowthSlope || '0.00')
+      };
+    }
+    const list = [...(activeDashboardMatches || [])].reverse();
+    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
+      const dotaLcc = calculateDotaLinearGrowth(list);
+      return {
+        slopeNumeric: dotaLcc.slope,
+        slope: dotaLcc.slope > 0 ? `+${dotaLcc.slope}` : String(dotaLcc.slope || '0.00')
+      };
+    }
+    return calculateLCCMetrics(list);
+  }, [isFcSelected, fcMatches, activeDashboardMatches, selectedGame, f1Data]);
 
   // Calculate dynamic dashboard stats from the active matches stream
   const dashboardStats = React.useMemo(() => {
+    if (isFcSelected) {
+      return {
+        totalMatches: fcMatches.length,
+        hoursCompeted: (fcMatches.length * 0.3).toFixed(1)
+      };
+    }
+    if (selectedGame === 'F1 25' && f1Data) {
+      return {
+        totalMatches: f1Data.totalLaps || 0,
+        hoursCompeted: ((f1Data.totalLaps || 0) * 0.05).toFixed(1),
+      };
+    }
     const list = Array.isArray(activeDashboardMatches) ? activeDashboardMatches : [];
     const totalMatches = list.length;
 
@@ -362,14 +568,74 @@ export const HomeDashboard = () => {
     };
   }, [activeDashboardMatches]);
 
+  const isF1Selected = selectedGame === 'F1 25' || selectedGame?.toLowerCase().includes('f1');
+
   const activeGameTelemetry = useMemo(() => {
+    if (isFcSelected && fcMatches) {
+      return fcMatches.map((m, idx) => {
+        const p = m.metrics_payload || {};
+        const scoreVal = parseFloat(m.performance_score || p.performance_score || 75.0);
+        return {
+          matchIndex: `Match #${idx + 1}`,
+          sessionIndex: idx + 1,
+          scoreP: scoreVal.toFixed(1),
+          score: scoreVal,
+          acs: scoreVal,
+          division: p.division || 'Elite Division',
+          outcome: p.outcome || 'VICTORY',
+          scoreDisplay: p.score_display || `${p.goals_scored ?? 0} - ${p.goals_conceded ?? 0}`,
+          possession: p.possession || 50,
+          passAccuracy: p.pass_accuracy || 80,
+          xg: p.xg || '0.0',
+          map: `${p.outcome || 'VICTORY'} (${p.score_display || `${p.goals_scored ?? 0} - ${p.goals_conceded ?? 0}`})`
+        };
+      });
+    }
+    if (isF1Selected && f1Data?.recentMatches) {
+      return f1Data.recentMatches.map((m, idx) => {
+        const scoreVal = parseFloat(m.score || m.performance_score || 75.0);
+        const lapTimeVal = m.lapTime || m.lap_time_seconds;
+        return {
+          sessionIndex: idx + 1,
+          matchIndex: `Session #${idx + 1}`,
+          scoreP: scoreVal.toFixed(1),
+          score: scoreVal,
+          lapTime: lapTimeVal,
+          trackName: m.trackName || m.track_name || 'Red Bull Ring (Austria)',
+          topSpeed: m.topSpeed || m.top_speed_kmh,
+          totalSessionLaps: m.totalSessionLaps || m.total_session_laps || 1,
+          map: m.trackName || m.track_name || 'Red Bull Ring',
+          kd: formatLapTime(lapTimeVal),
+          acs: scoreVal
+        };
+      });
+    }
     if (!activeDashboardMatches || activeDashboardMatches.length === 0) return [];
     const ascMatches = [...activeDashboardMatches].reverse();
 
     return ascMatches.map((match, idx) => {
       const ratingVal = match.performance_score || match.calculated_rating || match.rating || 50;
-      const mapName = match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH';
-      const kdVal = match.metrics_payload?.kd || match.metrics_payload?.kd_ratio || match.kd || match.kd_ratio || '1.0';
+      const mapName = selectedGame === 'Dota 2'
+        ? getDotaHeroName(match.metrics_payload?.hero_id)
+        : selectedGame === 'League of Legends'
+        ? (match.metrics_payload?.champion_name || 'CHAMPION')
+        : (match.metrics_payload?.map || match.metrics_payload?.track || match.map || match.track || 'MATCH');
+      let kdVal = '1.00';
+      const pl = match.metrics_payload || {};
+      if (pl.kda !== undefined && pl.kda !== null) {
+        kdVal = Number(pl.kda).toFixed(2);
+      } else if (pl.kd_ratio !== undefined && pl.kd_ratio !== null) {
+        kdVal = Number(pl.kd_ratio).toFixed(2);
+      } else if (pl.kd !== undefined && pl.kd !== null) {
+        kdVal = Number(pl.kd).toFixed(2);
+      } else if (pl.kills !== undefined && pl.deaths !== undefined) {
+        const kills = Number(pl.kills || 0);
+        const deaths = Math.max(1, Number(pl.deaths || 1));
+        const assists = Number(pl.assists || 0);
+        kdVal = ((kills + assists) / deaths).toFixed(2);
+      } else {
+        kdVal = Number(match.kd || match.kd_ratio || 1.0).toFixed(2);
+      }
 
       let rawACS = 0;
       if (match.acs !== undefined && match.acs !== null && !isNaN(match.acs)) {
@@ -394,7 +660,7 @@ export const HomeDashboard = () => {
         kd: kdVal
       };
     });
-  }, [activeDashboardMatches]);
+  }, [activeDashboardMatches, f1Data, isF1Selected, selectedGame]);
 
   const hasReviews = skillScores.reviewCount > 0;
   const skills = {
@@ -479,11 +745,17 @@ export const HomeDashboard = () => {
             onChange={(e) => setSelectedGame(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
-            {registeredTitles.map((title) => (
-              <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
-                {title.toUpperCase()}
+            {activeTitles && activeTitles.length > 0 ? (
+              activeTitles.map((title) => (
+                <option key={title} value={title} className="bg-[#0b131d] text-white font-mono py-2">
+                  {title.toUpperCase()}
+                </option>
+              ))
+            ) : (
+              <option value="Valorant" className="bg-[#0b131d] text-white font-mono py-2">
+                VALORANT
               </option>
-            ))}
+            )}
           </select>
 
           {/* Dropdown Chevron Icon */}
@@ -527,26 +799,56 @@ export const HomeDashboard = () => {
         </div>
 
         {/* COMPETITIVE STANDING BANNER */}
-        <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4">
-          <div className="flex items-center gap-3.5">
-            
-            {/* FRAMED BOX WITH BLINKING RANK DOT */}
-            <div className={`w-10 h-10 rounded-xl bg-[#070e17] border flex items-center justify-center shrink-0 ${getRankTheme(liveRank).boxBorder}`}>
-              <div className={`w-3 h-3 rounded-full animate-pulse ${getRankTheme(liveRank).dot}`}></div>
-            </div>
-
-            {/* DETAILS */}
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                {selectedGame || 'VALORANT'} COMPETITIVE STANDING
-              </div>
-              <div className={`text-base sm:text-lg font-black uppercase tracking-wide ${getRankTheme(liveRank).text}`}>
-                {liveRank || 'IMMORTAL 1'}
+        {!isF1Selected && (
+          loading ? (
+            <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4 animate-pulse">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center shrink-0">
+                  <div className="w-3 h-3 rounded-full bg-slate-700"></div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
+                    {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+                  </div>
+                  <div className="h-5 w-32 bg-slate-800 rounded mt-1"></div>
+                </div>
               </div>
             </div>
+          ) : (
+            <div className="flex items-center p-4 rounded-xl bg-[#08101a] border border-slate-800/80 mb-4">
+              <div className="flex items-center gap-3.5">
+                
+                {/* FRAMED BOX WITH BLINKING RANK DOT */}
+                <div className={`w-10 h-10 rounded-xl bg-[#070e17] border flex items-center justify-center shrink-0 ${getRankTheme(liveRank).boxBorder}`}>
+                  <div className={`w-3 h-3 rounded-full animate-pulse ${getRankTheme(liveRank).dot}`}></div>
+                </div>
 
-          </div>
-        </div>
+                {/* DETAILS */}
+                <div>
+                  <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                    {selectedGame || 'VALORANT'} COMPETITIVE STANDING
+                  </div>
+                  {(() => {
+                    const rankColor = (liveRank || '').startsWith('IMMORTAL')
+                      ? 'text-amber-400 font-black'
+                      : (liveRank || '').startsWith('DIVINE') || (liveRank || '').startsWith('ANCIENT')
+                      ? 'text-purple-450 dark:text-purple-400 font-bold'
+                      : (liveRank || '').startsWith('LEGEND') || (liveRank || '').startsWith('ARCHON')
+                      ? 'text-cyan-400 font-bold'
+                      : 'text-slate-300 font-bold';
+
+                    return (
+                      <div className={`text-base sm:text-lg uppercase tracking-wide ${rankColor}`}>
+                        {liveRank}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+              </div>
+            </div>
+          )
+        )}
 
         {/* OFFICIAL VALORANT ACT CYCLE BANNER */}
         {String(selectedGame || '').toLowerCase().includes('val') && actInfo?.title && (
@@ -564,7 +866,7 @@ export const HomeDashboard = () => {
         {/* KPI Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
 
-          {/* 1. TOTAL MATCHES PLAYED */}
+          {/* 1. TOTAL MATCHES / SESSIONS PLAYED */}
           <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-lg border bg-cyan-950/40 border-cyan-500/30 text-cyan-400">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -574,38 +876,79 @@ export const HomeDashboard = () => {
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                TOTAL MATCHES PLAYED
+                {isF1Selected ? 'TOTAL SESSIONS' : 'TOTAL MATCHES PLAYED'}
               </div>
               <div className="text-base sm:text-lg font-mono font-black text-white">
-                {dashboardStats.totalMatches}
+                {isF1Selected ? (f1Data?.totalLaps || 0) : dashboardStats.totalMatches}
               </div>
             </div>
           </div>
 
           {/* 2. LINEAR GROWTH SLOPE */}
-          <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
-            <div className={`flex items-center justify-center w-10 h-10 rounded-lg border ${
-              dashLCC.slopeNumeric >= 0
-                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400'
-                : 'bg-rose-950/40 border-rose-500/30 text-rose-400'
-            }`}>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                LINEAR GROWTH SLOPE
-              </div>
-              <div className={`text-base sm:text-lg font-mono font-black ${
-                dashLCC.slopeNumeric >= 0 ? 'text-emerald-400' : 'text-rose-400'
-              }`}>
-                {dashLCC.slope}
-              </div>
-            </div>
-          </div>
+          {(() => {
+            const totalMatches = isF1Selected ? (f1Data?.totalLaps || 0) : Number(dashboardStats.totalMatches);
+            const slopeValue = isF1Selected ? parseFloat(f1Data?.linearGrowthSlope || 0) : dashLCC.slopeNumeric;
+            const isCalibrated = totalMatches > 0 && !isNaN(slopeValue);
+            const isPositive = slopeValue > 0;
+            const formattedSlope = isF1Selected ? (f1Data?.linearGrowthSlope ?? '0.00') : dashLCC.slope;
 
-          {/* 3. HOURS COMPETED */}
+            return (
+              <div
+                className={`flex items-center gap-4 rounded-xl border p-4 transition-all duration-200 ${
+                  isCalibrated
+                    ? 'border-slate-800/80 bg-[#08101a]'
+                    : 'border-slate-800/40 bg-[#040810]/50 opacity-60'
+                }`}
+              >
+                {/* Icon */}
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg border ${
+                    isCalibrated
+                      ? isPositive
+                        ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30'
+                        : 'bg-rose-950/40 text-rose-400 border-rose-500/30'
+                      : 'bg-slate-900/50 text-slate-600 border-slate-800'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                    />
+                  </svg>
+                </div>
+
+                {/* Label and Value */}
+                <div>
+                  <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
+                    LINEAR GROWTH SLOPE
+                  </span>
+                  <div className="flex items-baseline gap-1 mt-0.5 font-mono">
+                    <span
+                      className={`text-base sm:text-lg font-mono font-black ${
+                        isCalibrated
+                          ? isPositive
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      {isCalibrated ? formattedSlope : '0.00'}
+                    </span>
+                    {!isCalibrated && (
+                      <span className="text-[9px] uppercase tracking-wider text-slate-600 font-bold ml-1.5">
+                        (Uncalibrated)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 3. HOURS COMPETED / BEST LAP */}
           <div className="p-4 rounded-xl bg-[#08101a] border border-slate-800/80 flex items-center gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-lg border bg-amber-950/40 border-amber-500/30 text-amber-400">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -614,10 +957,14 @@ export const HomeDashboard = () => {
             </div>
             <div>
               <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                HOURS COMPETED
+                {isF1Selected ? 'BEST LAP' : 'HOURS COMPETED'}
               </div>
               <div className="text-base sm:text-lg font-mono font-black text-white">
-                {dashboardStats.hoursCompeted} <span className="text-xs text-slate-400 font-normal">Hrs</span>
+                {isF1Selected ? (
+                  <span className="text-emerald-400">{formatLapTime(f1Data?.bestLap)}</span>
+                ) : (
+                  <>{dashboardStats.hoursCompeted} <span className="text-xs text-slate-400 font-normal">Hrs</span></>
+                )}
               </div>
             </div>
           </div>
@@ -635,11 +982,19 @@ export const HomeDashboard = () => {
                 PERFORMANCE TRAJECTORY (LCC)
               </h3>
               <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                Progression of Average Combat Score (ACS) across ingested matches
+                {isF1Selected
+                  ? 'Progression of Performance Rating across recorded sessions'
+                  : isFcSelected
+                  ? 'Progression of Match Performance Score across ingested fixtures'
+                  : 'Progression of Average Combat Score (ACS) across ingested matches'}
               </p>
             </div>
-            <span className="px-2.5 py-1 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 rounded-lg">
-              {activeGameTelemetry.length} Matches Logged
+            <span className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg border ${
+              isFcSelected 
+                ? 'text-amber-400 bg-amber-950/60 border-amber-500/30' 
+                : 'text-cyan-400 bg-cyan-950/60 border-cyan-500/30'
+            }`}>
+              {activeGameTelemetry.length} {isF1Selected ? 'Sessions Logged' : isFcSelected ? 'Fixtures Logged' : 'Matches Logged'}
             </span>
           </div>
 
@@ -661,7 +1016,7 @@ export const HomeDashboard = () => {
                     tickLine={false}
                   />
                   <YAxis
-                    domain={['dataMin - 20', 'dataMax + 20']}
+                    domain={isF1Selected ? [70, 100] : isFcSelected ? [40, 100] : ['dataMin - 20', 'dataMax + 20']}
                     fontFamily="monospace"
                     fontSize={10}
                     stroke="#475569"
@@ -672,6 +1027,39 @@ export const HomeDashboard = () => {
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         const data = payload[0].payload;
+                        if (isFcSelected) {
+                          return (
+                            <div className="p-3 rounded-xl bg-[#04080e] border border-amber-500/40 shadow-xl font-mono">
+                              <div className="text-xs font-black text-white mb-1">
+                                Match #{data.sessionIndex} • {data.division}
+                              </div>
+                              <div className="text-xs font-black text-amber-400">
+                                Outcome: <span className="text-white">{data.outcome} ({data.scoreDisplay})</span>
+                              </div>
+                              <div className="text-xs font-black text-emerald-400 mt-0.5">
+                                Performance Score: <span className="text-white">{data.scoreP} Pts</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                Possession: {data.possession}% | Pass Acc: {data.passAccuracy}%
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (isF1Selected) {
+                          return (
+                            <div className="p-3 rounded-xl bg-[#04080e] border border-cyan-500/40 shadow-xl font-mono">
+                              <div className="text-xs font-black text-white mb-1">
+                                Session #{data.sessionIndex} • {data.trackName}
+                              </div>
+                              <div className="text-xs font-black text-emerald-400">
+                                Fastest Lap: <span className="text-white">{formatLapTime(data.lapTime)}</span>
+                              </div>
+                              <div className="text-xs font-black text-cyan-400 mt-0.5">
+                                LCC Score: <span className="text-white">{data.score || data.scoreP} Pts</span>
+                              </div>
+                            </div>
+                          );
+                        }
                         return (
                           <div className="p-3 rounded-xl bg-[#04080e] border border-cyan-500/40 shadow-xl font-mono">
                             <div className="text-xs font-black text-white mb-1">{data.matchIndex} • {data.map}</div>
@@ -690,10 +1078,10 @@ export const HomeDashboard = () => {
                   <Line
                     type="monotone"
                     dataKey="acs"
-                    stroke="#22d3ee"
+                    stroke={isFcSelected ? '#f59e0b' : '#22d3ee'}
                     strokeWidth={2}
-                    dot={{ r: 4, fill: '#08101a', stroke: '#22d3ee', strokeWidth: 2 }}
-                    activeDot={{ r: 6, fill: '#22d3ee', stroke: '#ffffff', strokeWidth: 2 }}
+                    dot={{ r: 4, fill: '#08101a', stroke: isFcSelected ? '#f59e0b' : '#22d3ee', strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: isFcSelected ? '#f59e0b' : '#22d3ee', stroke: '#ffffff', strokeWidth: 2 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -707,10 +1095,10 @@ export const HomeDashboard = () => {
           </div>
         </div>
 
-        {/* RIGHT: LATEST INGESTED MATCHES */}
+        {/* RIGHT: LATEST INGESTED MATCHES / SESSIONS / FIXTURES */}
         <div className="lg:col-span-4 p-5 rounded-2xl bg-[#070e17] border border-slate-800/80 flex flex-col">
           <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">
-            LATEST INGESTED MATCHES
+            {isF1Selected ? 'LATEST INGESTED SESSIONS' : isFcSelected ? 'LATEST INGESTED FIXTURES' : 'LATEST INGESTED MATCHES'}
           </h3>
 
           <div className="space-y-2.5 flex-1 overflow-y-auto max-h-64">
@@ -718,19 +1106,60 @@ export const HomeDashboard = () => {
               activeGameTelemetry.slice(-4).reverse().map((item, idx) => (
                 <div 
                   key={idx}
-                  className="flex items-center justify-between p-3 rounded-xl bg-[#0b131f] border border-slate-800/80 hover:border-slate-700 transition"
+                  className={`flex items-center justify-between p-3 rounded-xl bg-[#0b131f] border border-slate-800/80 hover:border-slate-700 transition`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-1.5 h-6 rounded-full bg-cyan-400"></span>
-                    <div>
-                      <div className="text-xs font-bold text-white uppercase">{item.map}</div>
-                      <div className="text-[10px] font-mono text-slate-400">{item.matchIndex} Ingested</div>
-                    </div>
-                  </div>
-                  <div className="text-right font-mono">
-                    <div className="text-xs font-bold text-slate-200">K/D: {item.kd}</div>
-                    <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
-                  </div>
+                  {isFcSelected ? (
+                    <>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-1.5 h-6 rounded-full bg-amber-400"></span>
+                        <div>
+                          <div className="text-xs font-bold text-white uppercase">{item.map}</div>
+                          <div className="text-[10px] font-mono text-slate-400">
+                            {item.matchIndex} • {item.division}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right font-mono">
+                        <div className="text-xs font-bold text-slate-200">
+                          POSS: <span className="text-amber-400">{item.possession}%</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-emerald-400">
+                          P: {item.scoreP}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-1.5 h-6 rounded-full bg-cyan-400"></span>
+                        <div>
+                          <div className="text-xs font-bold text-white uppercase">{item.map}</div>
+                          <div className="text-[10px] font-mono text-slate-400">
+                            {isF1Selected ? `SESSION #${item.sessionIndex}` : `${item.matchIndex} Ingested`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right font-mono">
+                        {isF1Selected ? (
+                          <>
+                            <div className="text-xs font-bold text-slate-200">
+                              LAP: <span className="text-emerald-400">{formatLapTime(item.lapTime)}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-cyan-400">
+                              SCORE: {item.score || item.scoreP}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs font-bold text-slate-200">
+                              {selectedGame === 'Dota 2' || selectedGame === 'League of Legends' ? 'K/D/A' : 'K/D'}: <span className="text-cyan-400">{item.kd}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-cyan-400">P: {item.scoreP}</div>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               ))
             ) : (

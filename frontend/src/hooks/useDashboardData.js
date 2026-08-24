@@ -8,6 +8,15 @@ import { supabase } from '../services/supabaseClient';
  * - Computes LCC delta, early average, and late average performance ratings.
  * - Tracks user's player profile with automatic database sync and local auth metadata fallback.
  */
+const getTelemetryTable = (gameKey) => {
+  const g = (gameKey || '').toLowerCase();
+  if (g.includes('dota')) return 'dota2_match_telemetry';
+  if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
+  if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  if (g === 'valorant') return 'valorant_match_telemetry';
+  return 'matches';
+};
+
 export const useDashboardData = (session, activeSelectedGame) => {
   const [matchesList, setMatchesList] = useState([]);
   const [playerProfile, setPlayerProfile] = useState({
@@ -32,17 +41,14 @@ export const useDashboardData = (session, activeSelectedGame) => {
   const fetchMatches = async () => {
     if (!userId || !activeSelectedGame) return;
     try {
-      const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
-      const sortColumn = activeSelectedGame === 'Valorant' ? 'created_at' : 'match_timestamp'; // or match_date depending on schema, let's use created_at as fallback is standard
-
-      // Fallback: the GameData component uses 'match_date', so we'll use 'match_date' for Valorant if that is the correct schema.
-      const orderByCol = activeSelectedGame === 'Valorant' ? 'match_date' : 'match_timestamp';
+      const tableName = getTelemetryTable(activeSelectedGame);
+      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry' || tableName === 'lol_match_telemetry' || tableName === 'cs2_match_telemetry';
+      const orderByCol = isCustomTable ? 'created_at' : 'match_timestamp';
 
       const { data, error } = await supabase
         .from(tableName)
         .select('*')
         .eq('user_id', userId)
-        .eq('game_title', activeSelectedGame)
         .order(orderByCol, { ascending: true });
 
       if (error) throw error;
@@ -91,7 +97,7 @@ export const useDashboardData = (session, activeSelectedGame) => {
 
     if (!userId || !activeSelectedGame) return;
 
-    const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
+    const tableName = getTelemetryTable(activeSelectedGame);
 
     // Real-time Postgres changes subscription target matches changes
     const channel = supabase
@@ -150,8 +156,9 @@ export const useDashboardData = (session, activeSelectedGame) => {
   const addMockMatch = async (score) => {
     if (!userId || !activeSelectedGame) return;
     try {
-      const tableName = activeSelectedGame === 'Valorant' ? 'valorant_match_telemetry' : 'matches';
-      const timeColumn = activeSelectedGame === 'Valorant' ? 'match_date' : 'match_timestamp';
+      const tableName = getTelemetryTable(activeSelectedGame);
+      const isCustomTable = tableName === 'valorant_match_telemetry' || tableName === 'dota2_match_telemetry' || tableName === 'lol_match_telemetry' || tableName === 'cs2_match_telemetry';
+      const timeColumn = isCustomTable ? 'created_at' : 'match_timestamp';
 
       const payload = {
         user_id: userId,
@@ -160,7 +167,7 @@ export const useDashboardData = (session, activeSelectedGame) => {
         [timeColumn]: new Date().toISOString()
       };
 
-      if (activeSelectedGame === 'Valorant') {
+      if (isCustomTable) {
         payload.ingestion_type = 'MOCK_DATA';
       }
 

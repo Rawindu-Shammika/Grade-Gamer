@@ -1,27 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createTelemetryRouter } from './src/routes/telemetryRoutes.js';
-import F1UdpListener from './src/services/f1UdpListener.js';
+import dgram from 'node:dgram';
+import { supabase } from './src/config/supabase.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
-const udpPort = parseInt(process.env.UDP_PORT || '20777', 10);
 
 app.use(cors());
 app.use(express.json());
 
-import { supabase } from './src/config/supabase.js';
-
-// Initialize F1 UDP Telemetry Listener
-const udpListener = new F1UdpListener(udpPort);
-udpListener.start();
-
-// Mount telemetry routes
-app.use('/api/telemetry', createTelemetryRouter(udpListener));
-
+// ----------------------------------------------------
+// VALORANT API SYNC ROUTE (100% UNTOUCHED & PROTECTED)
+// ----------------------------------------------------
 app.post('/api/sync-valorant', async (req, res) => {
   const { userId, gameTitle = 'Valorant', gamerTag, tagLine, region = 'ap' } = req.body;
 
@@ -40,7 +33,6 @@ app.post('/api/sync-valorant', async (req, res) => {
   const encodedTag = encodeURIComponent(cleanTag);
 
   try {
-    // Add before querying HenrikDev API:
     const { data: userProfile, error: profileErr } = await supabase
       .from('profiles')
       .select('valorant_ign, valorant_tag')
@@ -50,7 +42,7 @@ app.post('/api/sync-valorant', async (req, res) => {
     if (userProfile?.valorant_ign && userProfile?.valorant_tag) {
       const boundHandle = `${userProfile.valorant_ign}#${userProfile.valorant_tag}`.toLowerCase();
       const inputHandle = `${cleanName}#${cleanTag}`.toLowerCase();
-      
+
       if (boundHandle !== inputHandle) {
         return res.status(403).json({
           error: `Access Denied: Your GradeGamer profile is permanently bound to ${userProfile.valorant_ign}#${userProfile.valorant_tag}. Multi-account switching is prohibited.`
@@ -58,7 +50,6 @@ app.post('/api/sync-valorant', async (req, res) => {
       }
     }
 
-    // HenrikDev Valorant V3 matches endpoint with strict competitive mode filter
     const url = `https://api.henrikdev.xyz/valorant/v3/matches/${region}/${encodedName}/${encodedTag}?mode=competitive&size=1`;
     console.log(`[HenrikDev API Request]: ${url}`);
 
@@ -85,7 +76,7 @@ app.post('/api/sync-valorant', async (req, res) => {
       return res.status(400).json({ error: 'Could not extract valid match ID from response.' });
     }
 
-    // --- DUPLICATE MATCH CHECK ---
+    // Duplicate Check
     const { data: existingRecords, error: checkError } = await supabase
       .from('valorant_match_telemetry')
       .select('id, metrics_payload')
@@ -131,7 +122,6 @@ app.post('/api/sync-valorant', async (req, res) => {
     const totalShots = Math.max(1, headshots + bodyshots + legshots);
     const hsPct = Number(((headshots / totalShots) * 100).toFixed(1));
 
-    // GradeGamer Performance Score P: ((ACS / 350) * 60) + ((K/D / 2.0) * 40)
     const performanceScore = Number(((acs / 350) * 60 + (kd / 2.0) * 40).toFixed(1));
 
     const payload = {
@@ -155,7 +145,6 @@ app.post('/api/sync-valorant', async (req, res) => {
       source: 'HENRIK_VALORANT_API'
     };
 
-    // Insert Unique Record into Supabase
     const { data: inserted, error: dbError } = await supabase
       .from('valorant_match_telemetry')
       .insert({
@@ -170,7 +159,6 @@ app.post('/api/sync-valorant', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    // After successful match lookup and telemetry insertion:
     if (!userProfile?.valorant_ign) {
       await supabase
         .from('profiles')
@@ -187,15 +175,1096 @@ app.post('/api/sync-valorant', async (req, res) => {
   }
 });
 
-// Basic health check route
+// Helper to parse OpenDota rank_tier integer into human-readable Dota rank string
+const parseDotaRank = (rankTier, leaderboardRank) => {
+  if (!rankTier && !leaderboardRank) return 'UNRATED';
+
+  // Any tier 80 or above is IMMORTAL
+  const tierNum = Number(rankTier) || 0;
+  if (tierNum >= 80 || leaderboardRank) {
+    return leaderboardRank ? `IMMORTAL #${leaderboardRank}` : 'IMMORTAL';
+  }
+
+  const medalTier = Math.floor(tierNum / 10);
+  const stars = tierNum % 10;
+
+  const MEDALS = {
+    1: 'HERALD',
+    2: 'GUARDIAN',
+    3: 'CRUSADER',
+    4: 'ARCHON',
+    5: 'LEGEND',
+    6: 'ANCIENT',
+    7: 'DIVINE',
+    8: 'IMMORTAL'
+  };
+
+  const medalName = MEDALS[medalTier] || 'UNRATED';
+  if (medalName === 'UNRATED') return 'UNRATED';
+  if (stars === 0) return medalName;
+
+  return `${medalName} ${stars}`;
+};
+
+// Calculate normalized Dota 2 Performance Score (0 - 100)
+const calculateDotaPerformanceScore = (match, hasWon) => {
+  const kills = match.kills || 0;
+  const deaths = Math.max(1, match.deaths || 1);
+  const assists = match.assists || 0;
+  const kda = (kills + assists) / deaths;
+
+  const gpm = match.gold_per_min || 0;
+  const xpm = match.xp_per_min || 0;
+
+  // Normalized scoring components
+  const gpmScore = Math.min(35, (gpm / 700) * 35);
+  const kdaScore = Math.min(35, (kda / 4.0) * 35);
+  const xpmScore = Math.min(20, (xpm / 750) * 20);
+  const winBonus = hasWon ? 10 : 0;
+
+  const totalScore = parseFloat((gpmScore + kdaScore + xpmScore + winBonus).toFixed(1));
+  return Math.min(100, Math.max(10, totalScore));
+};
+
+// ----------------------------------------------------
+// DOTA 2 OPENDOTA API SYNC ROUTE
+// ----------------------------------------------------
+app.post('/api/sync-dota2', async (req, res) => {
+  const { userId, gameTitle = 'Dota 2', accountId } = req.body;
+
+  if (!userId || !accountId) {
+    return res.status(400).json({ error: 'User ID and 32-bit Steam Account ID (Friend ID) are required.' });
+  }
+
+  const cleanAccountId = accountId.toString().trim();
+
+  try {
+    // 1. Permanent Account Binding Check (Profile Guardrail) using steam_id
+    const { data: userProfile, error: profileErr } = await supabase
+      .from('profiles')
+      .select('steam_id, username')
+      .eq('id', userId)
+      .single();
+
+    if (userProfile?.steam_id) {
+      if (userProfile.steam_id.toString() !== cleanAccountId) {
+        return res.status(403).json({
+          error: `Access Denied: Your GradeGamer profile is permanently bound to Steam Account ID ${userProfile.steam_id}. Multi-account switching is prohibited.`
+        });
+      }
+    }
+
+    // 1.5 Fetch player details from OpenDota players profile API
+    let competitiveRank = 'UNRATED';
+    let avatarUrl = null;
+    let personaname = null;
+    try {
+      const playerProfileRes = await fetch(`https://api.opendota.com/api/players/${cleanAccountId}`);
+      if (playerProfileRes.ok) {
+        const playerProfileData = await playerProfileRes.json();
+        const rankTier = playerProfileData?.rank_tier;
+        const leaderboardRank = playerProfileData?.leaderboard_rank;
+        competitiveRank = parseDotaRank(rankTier, leaderboardRank);
+        console.log(`[Dota 2 Rank Debug] Account: ${cleanAccountId}, rank_tier: ${rankTier}, leaderboard: ${leaderboardRank} -> Parsed: ${competitiveRank}`);
+        avatarUrl = playerProfileData?.profile?.avatarfull || null;
+        personaname = playerProfileData?.profile?.personaname || null;
+      }
+    } catch (profErr) {
+      console.warn('[OpenDota Profile Fetch Warning]:', profErr.message);
+    }
+
+    // 2. Query OpenDota API for recent matches
+    const url = `https://api.opendota.com/api/players/${cleanAccountId}/recentMatches`;
+    console.log(`[OpenDota API Request]: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'GradeGamer-Telemetry/1.0'
+      }
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `OpenDota API request failed with status ${response.status}` });
+    }
+
+    const matches = await response.json();
+
+    if (!Array.isArray(matches) || matches.length === 0) {
+      return res.status(404).json({ error: 'No recent Dota 2 matches found or player profile is set to private in Steam/Dota settings.' });
+    }
+
+    const latestMatch = matches[0];
+    const matchId = latestMatch.match_id?.toString();
+
+    if (!matchId) {
+      return res.status(400).json({ error: 'Could not extract valid match ID from OpenDota response.' });
+    }
+
+    // 3. Duplicate Ingestion Check
+    const { data: existingRecords, error: checkError } = await supabase
+      .from('dota2_match_telemetry')
+      .select('id, metrics_payload')
+      .eq('user_id', userId)
+      .eq('metrics_payload->>match_id', matchId);
+
+    if (checkError) {
+      console.warn('[Dota 2 Duplicate Check Warning]:', checkError.message);
+    }
+
+    if (existingRecords && existingRecords.length > 0) {
+      return res.status(409).json({
+        error: `Dota 2 Match #${matchId} has already been ingested. Play a new match to pull fresh telemetry.`
+      });
+    }
+
+    // 4. Metric Extraction & Calculation
+    const kills = latestMatch.kills || 0;
+    const deaths = Math.max(1, latestMatch.deaths || 1);
+    const assists = latestMatch.assists || 0;
+    const kda = Number(((kills + assists) / deaths).toFixed(2));
+    
+    const gpm = latestMatch.gold_per_min || 0;
+    const xpm = latestMatch.xp_per_min || 0;
+    const durationSeconds = latestMatch.duration || 1800;
+    const durationMinutes = parseFloat((durationSeconds / 60).toFixed(1));
+    const heroDamage = latestMatch.hero_damage || 0;
+    const towerDamage = latestMatch.tower_damage || 0;
+    const lastHits = latestMatch.last_hits || 0;
+
+    // Slot 0-127 = Radiant (Team 2), Slot 128-255 = Dire (Team 3)
+    const isRadiant = latestMatch.player_slot < 128;
+    const radiantWin = latestMatch.radiant_win;
+    const hasWon = (isRadiant && radiantWin) || (!isRadiant && !radiantWin);
+
+    // GradeGamer Performance Score P
+    const performanceScore = calculateDotaPerformanceScore(latestMatch, hasWon);
+
+    const payload = {
+      match_id: matchId,
+      outcome: hasWon ? 'VICTORY' : 'DEFEAT',
+      team: isRadiant ? 'Radiant' : 'Dire',
+      duration_minutes: durationMinutes,
+      game_length_in_seconds: durationSeconds,
+      hero_id: latestMatch.hero_id,
+      game_mode: latestMatch.game_mode,
+      kills,
+      deaths,
+      assists,
+      kda,
+      gpm,
+      xpm,
+      last_hits: lastHits,
+      hero_damage: heroDamage,
+      tower_damage: towerDamage,
+      account_id: cleanAccountId,
+      source: 'OPENDOTA_API',
+      competitive_rank: competitiveRank,
+      avatar: avatarUrl,
+      personaname: personaname,
+      performance_score: performanceScore
+    };
+
+    // 5. Insert Unique Record into Supabase (using dota2_match_telemetry table)
+    const { data: inserted, error: dbError } = await supabase
+      .from('dota2_match_telemetry')
+      .insert({
+        user_id: userId,
+        game_title: gameTitle,
+        ingestion_type: 'AUTOMATED_API',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      })
+      .select()
+      .single();
+
+    if (dbError) {
+      console.error('[Dota 2 Supabase Insert Error]:', dbError);
+      throw dbError;
+    }
+
+    console.log(`✅ Stored in dota2_match_telemetry: ${inserted.id}`);
+
+    // 6. Bind Account ID and avatar to profile on successful sync
+    try {
+      const { error: updateErr } = await supabase
+        .from('profiles')
+        .update({
+          dota2_rank: competitiveRank || 'UNRATED',
+          dota2_steam_id: String(cleanAccountId).trim(),
+          steam_id: String(cleanAccountId).trim(),
+          steam_avatar_url: avatarUrl || userProfile?.steam_avatar_url
+        })
+        .eq('id', userId);
+
+      if (updateErr) throw updateErr;
+      console.log(`🔒 Bound user ${userId} to Steam ID ${cleanAccountId} with Dota 2 custom fields`);
+    } catch (err) {
+      console.warn('[Dota 2 Profiles Custom Columns Failed, falling back to standard columns]:', err.message);
+      await supabase
+        .from('profiles')
+        .update({ 
+          steam_id: String(cleanAccountId).trim(),
+          steam_avatar_url: avatarUrl || userProfile?.steam_avatar_url
+        })
+        .eq('id', userId);
+      console.log(`🔒 Bound user ${userId} to Steam ID ${cleanAccountId} and Avatar (fallback path)`);
+    }
+
+    console.log(`✅ Ingested Dota 2 Match (${matchId}) for Account ${cleanAccountId} - Score: ${performanceScore}`);
+    return res.json({ success: true, record: inserted, payload, performanceScore });
+
+  } catch (err) {
+    console.error('[Dota 2 Sync Error]:', err);
+    return res.status(500).json({ error: err.message || 'Internal server error during Dota 2 sync' });
+  }
+});
+
+// Helper to fetch real LoL Rank by PUUID from Riot League-v4 API
+async function fetchLolRank(puuid, regionRouting, riotApiKey) {
+  try {
+    const platformMap = {
+      sea: 'sg2',
+      americas: 'na1',
+      europe: 'euw1',
+      asia: 'kr'
+    };
+    const platform = platformMap[regionRouting?.toLowerCase()] || regionRouting || 'sg2';
+
+    // 1. Query League entries by PUUID
+    const leagueUrl = `https://${platform}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`;
+    const leagueRes = await fetch(leagueUrl, {
+      headers: {
+        'X-Riot-Token': riotApiKey,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!leagueRes.ok) {
+      // Fallback with super-region if platform rejected
+      const directUrl = `https://${regionRouting}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`;
+      const directRes = await fetch(directUrl, {
+        headers: {
+          'X-Riot-Token': riotApiKey,
+          'Accept': 'application/json'
+        }
+      });
+      if (!directRes.ok) return 'UNRATED';
+      const directEntries = await directRes.json();
+      if (!Array.isArray(directEntries) || directEntries.length === 0) return 'UNRATED';
+      const target = directEntries.find(e => e.queueType === 'RANKED_SOLO_5x5') || directEntries[0];
+      return target?.tier ? `${target.tier} ${target.rank} (${target.leaguePoints} LP)` : 'UNRATED';
+    }
+
+    const entries = await leagueRes.json();
+    if (!Array.isArray(entries) || entries.length === 0) return 'UNRATED';
+
+    // 2. Prioritize Solo/Duo over Flex
+    const soloEntry = entries.find(e => e.queueType === 'RANKED_SOLO_5x5');
+    const flexEntry = entries.find(e => e.queueType === 'RANKED_FLEX_SR');
+    const target = soloEntry || flexEntry || entries[0];
+
+    if (!target || !target.tier) return 'UNRATED';
+
+    return `${target.tier} ${target.rank} (${target.leaguePoints} LP)`;
+  } catch (err) {
+    console.warn('[LoL Rank Fetch Warning]:', err.message);
+    return 'UNRATED';
+  }
+}
+
+// ----------------------------------------------------
+// LEAGUE OF LEGENDS RIOT API SYNC ROUTE
+// ----------------------------------------------------
+app.post('/api/sync-lol', async (req, res) => {
+  try {
+    const { userId, riotId, gameName: rawGameName, tagLine: rawTagLine, region = 'asia' } = req.body;
+    const riotApiKey = process.env.RIOT_API_KEY;
+
+    let gameName = rawGameName;
+    let tagLine = rawTagLine;
+
+    if (riotId && riotId.includes('#')) {
+      const parts = riotId.split('#');
+      gameName = parts[0];
+      tagLine = parts[1];
+    }
+
+    if (!userId || !gameName || !tagLine) {
+      return res.status(400).json({ error: 'Valid Riot ID (GameName#TagLine) and userId are required.' });
+    }
+
+    if (!riotApiKey) {
+      return res.status(500).json({ error: 'Riot API key is missing in server environment.' });
+    }
+
+    // Determine correct Riot Regional & Platform Routing
+    const cleanRegion = (region || 'asia').toLowerCase().trim();
+    const accountRouting = (cleanRegion === 'kr' || cleanRegion === 'jp' || cleanRegion === 'asia') 
+      ? 'asia' 
+      : (cleanRegion === 'na' || cleanRegion === 'br' || cleanRegion === 'lan' || cleanRegion === 'las' || cleanRegion === 'americas' 
+        ? 'americas' 
+        : (cleanRegion === 'euw' || cleanRegion === 'eune' || cleanRegion === 'europe' 
+          ? 'europe' 
+          : 'sea'));
+    const platformRouting = cleanRegion === 'asia' ? 'kr' : cleanRegion;
+
+    // 1. Resolve PUUID via ACCOUNT-V1
+    const accountUrl = `https://${accountRouting}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`;
+    const accountRes = await fetch(accountUrl, { headers: { 'X-Riot-Token': riotApiKey } });
+
+    if (!accountRes.ok) {
+      const errText = await accountRes.text();
+      return res.status(accountRes.status).json({ error: `Riot Account lookup failed on region [${accountRouting.toUpperCase()}]: ${errText}` });
+    }
+
+    const accountData = await accountRes.json();
+    const puuid = accountData.puuid;
+
+    // 2. Fetch Real Rank via LEAGUE-V4 API
+    const realLolRank = await fetchLolRank(puuid, platformRouting, riotApiKey);
+
+    // 3. Fetch Latest Match ID via MATCH-V5
+    const matchesUrl = `https://${accountRouting}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1`;
+    const matchesRes = await fetch(matchesUrl, { headers: { 'X-Riot-Token': riotApiKey } });
+    const matchIds = await matchesRes.json();
+
+    if (!matchIds || matchIds.length === 0) {
+      return res.status(404).json({ error: 'No recent League of Legends matches found for this account.' });
+    }
+
+    const latestMatchId = matchIds[0];
+
+    // 4. Duplicate Check in lol_match_telemetry
+    const { data: existingRecords } = await supabase
+      .from('lol_match_telemetry')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('metrics_payload->>match_id', latestMatchId);
+
+    if (existingRecords && existingRecords.length > 0) {
+      return res.status(409).json({ error: `Match #${latestMatchId} has already been ingested.` });
+    }
+
+    // 5. Fetch Match Details via MATCH-V5
+    const matchDetailUrl = `https://${accountRouting}.api.riotgames.com/lol/match/v5/matches/${latestMatchId}`;
+    const matchDetailRes = await fetch(matchDetailUrl, { headers: { 'X-Riot-Token': riotApiKey } });
+    const matchData = await matchDetailRes.json();
+
+    const participant = matchData?.info?.participants?.find(p => p.puuid === puuid);
+    if (!participant) {
+      return res.status(404).json({ error: 'Participant telemetry not found in match payload.' });
+    }
+
+    // 6. Calculate Standard Performance Score (0 - 100)
+    const kills = participant.kills || 0;
+    const deaths = Math.max(1, participant.deaths || 1);
+    const assists = participant.assists || 0;
+    const kda = (kills + assists) / deaths;
+    const cs = (participant.totalMinionsKilled || 0) + (participant.neutralMinionsKilled || 0);
+    const durationMin = Math.max(1, (matchData.info?.gameDuration || 1800) / 60);
+    const csPerMin = cs / durationMin;
+
+    const kdaScore = Math.min(40, (kda / 4.0) * 40);
+    const csScore = Math.min(30, (csPerMin / 8.0) * 30);
+    const kpScore = Math.min(20, ((participant.challenges?.killParticipation || 0.4) / 0.7) * 20);
+    const winBonus = participant.win ? 10 : 0;
+    const performanceScore = parseFloat(Math.min(100, Math.max(10, kdaScore + csScore + kpScore + winBonus)).toFixed(1));
+
+    // 7. Structure Payload & Save to Supabase
+    const payload = {
+      match_id: latestMatchId,
+      champion_id: participant.championId,
+      champion_name: participant.championName,
+      outcome: participant.win ? 'VICTORY' : 'DEFEAT',
+      role: participant.teamPosition || participant.individualPosition || 'UNKNOWN',
+      rank: realLolRank,
+      competitive_rank: realLolRank,
+      kills,
+      deaths: participant.deaths || 0,
+      assists,
+      kda: parseFloat(kda.toFixed(2)),
+      cs,
+      cs_per_min: parseFloat(csPerMin.toFixed(1)),
+      gold_earned: participant.goldEarned || 0,
+      vision_score: participant.visionScore || 0,
+      duration_minutes: parseFloat(durationMin.toFixed(1)),
+      riot_id: `${accountData.gameName || gameName}#${accountData.tagLine || tagLine}`,
+      puuid,
+      region: cleanRegion.toUpperCase(),
+      performance_score: performanceScore
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('lol_match_telemetry')
+      .insert({
+        user_id: userId,
+        game_title: 'League of Legends',
+        ingestion_type: 'AUTOMATED_API',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      })
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    // Update Profile with bound Riot ID, PUUID, real rank, and region
+    const fullRiotId = `${accountData.gameName || gameName}#${accountData.tagLine || tagLine}`.trim();
+    const { error: profileErr } = await supabase
+      .from('profiles')
+      .update({
+        lol_riot_id: fullRiotId,
+        lol_puuid: puuid || null,
+        lol_rank: realLolRank,
+        lol_region: cleanRegion.toUpperCase()
+      })
+      .eq('id', userId);
+
+    if (profileErr) {
+      console.error('[LoL Profile Update Failed]:', profileErr.message);
+      await supabase
+        .from('profiles')
+        .update({ lol_puuid: puuid, lol_region: cleanRegion.toUpperCase() })
+        .eq('id', userId);
+    }
+
+    console.log(`✅ Stored LoL Match #${latestMatchId} in lol_match_telemetry for Region ${cleanRegion.toUpperCase()}: ${inserted.id}`);
+    return res.status(200).json({ 
+      success: true, 
+      telemetry: inserted, 
+      riotId: fullRiotId,
+      gameName: accountData.gameName || gameName,
+      tagLine: accountData.tagLine || tagLine,
+      region: cleanRegion.toUpperCase(),
+      rank: realLolRank,
+      record: inserted, 
+      payload, 
+      performanceScore 
+    });
+  } catch (err) {
+    console.error('[LoL Sync Route Error]:', err);
+    return res.status(500).json({ error: err.message || 'Internal Server Error' });
+  }
+});
+
+// ----------------------------------------------------
+// COUNTER-STRIKE 2 (CS2) MANUAL TELEMETRY INGESTION ROUTE
+// ----------------------------------------------------
+app.post('/api/manual-entry-cs2', async (req, res) => {
+  try {
+    const { userId, map, outcome, rank, kills, deaths, assists, adr, hsPercent } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required.' });
+    }
+
+    const numKills = parseInt(kills, 10) || 0;
+    const numDeaths = Math.max(1, parseInt(deaths, 10) || 1);
+    const numAssists = parseInt(assists, 10) || 0;
+    const numAdr = parseFloat(adr) || 0.0;
+    const numHs = Math.min(100, Math.max(0, parseInt(hsPercent, 10) || 0));
+    const selectedMap = map ? map.toUpperCase() : 'DE_MIRAGE';
+    const matchOutcome = (outcome || 'VICTORY').toUpperCase();
+    const competitiveRank = rank || 'PREMIER (15,000 - 19,999)';
+
+    const kd = parseFloat((numKills / numDeaths).toFixed(2));
+
+    // Calculate GradeGamer Standardized Performance Score (0 - 100)
+    const kdScore = Math.min(45, (kd / 2.0) * 45);
+    const adrScore = Math.min(35, (numAdr / 110.0) * 35);
+    const hsScore = Math.min(20, (numHs / 60.0) * 20);
+    const performanceScore = parseFloat(Math.min(100, Math.max(15, kdScore + adrScore + hsScore)).toFixed(1));
+
+    const matchId = `cs2_manual_${Date.now()}`;
+
+    const payload = {
+      match_id: matchId,
+      map: selectedMap.startsWith('DE_') ? selectedMap : `DE_${selectedMap}`,
+      outcome: matchOutcome,
+      rank: competitiveRank,
+      competitive_rank: competitiveRank,
+      kills: numKills,
+      deaths: numDeaths,
+      assists: numAssists,
+      kd,
+      adr: numAdr,
+      hs_percent: numHs,
+      performance_score: performanceScore,
+      ingestion_mode: 'MANUAL_VERIFIED_ENTRY'
+    };
+
+    // Insert into Supabase
+    const { data: inserted, error: insertErr } = await supabase
+      .from('cs2_match_telemetry')
+      .insert({
+        user_id: userId,
+        game_title: 'Counter-Strike 2',
+        ingestion_type: 'MANUAL_ENTRY',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      })
+      .select()
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    // Update Profile standing with chosen CS2 rank
+    try {
+      await supabase
+        .from('profiles')
+        .update({ cs2_rank: competitiveRank })
+        .eq('id', userId);
+    } catch (e) {
+      console.warn('[CS2 Profile Rank Update Warning]:', e.message);
+    }
+
+    console.log(`✅ Stored Manual CS2 Match #${matchId} in cs2_match_telemetry: ${inserted.id}`);
+    return res.status(200).json({ success: true, telemetry: inserted, record: inserted, payload, performanceScore, rank: competitiveRank });
+  } catch (err) {
+    console.error('[CS2 Manual Entry Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to record CS2 match.' });
+  }
+});
+
+// ----------------------------------------------------
+// APEX LEGENDS MANUAL TELEMETRY INGESTION ROUTE
+// ----------------------------------------------------
+app.post('/api/manual-entry-apex', async (req, res) => {
+  try {
+    const { userId, playerName, legend, outcome, rankTier, kills, deaths, assists, damage, placement } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required.' });
+    }
+
+    const cleanPlayer = (playerName || 'ApexPlayer').trim();
+    const cleanLegend = (legend || 'Wraith').trim();
+    const cleanOutcome = (outcome || 'CHAMPION').toUpperCase();
+    const cleanRank = (rankTier || 'DIAMOND IV').toUpperCase();
+    
+    const k = parseInt(kills, 10) || 0;
+    const d = Math.max(1, parseInt(deaths, 10) || 1);
+    const a = parseInt(assists, 10) || 0;
+    const dmg = parseInt(damage, 10) || 0;
+    const place = Math.max(1, Math.min(20, parseInt(placement, 10) || 1));
+
+    const kdRatio = parseFloat((k / d).toFixed(2));
+    
+    // Performance Rating (0 - 100 Scale)
+    const combatPts = Math.min(45, (k * 4.0) + (a * 1.5));
+    const damagePts = Math.min(35, (dmg / 3500) * 35);
+    const placePts = Math.max(5, (21 - place) * 1.0);
+    const performanceScore = parseFloat(Math.min(99.0, Math.max(20.0, combatPts + damagePts + placePts)).toFixed(1));
+
+    const payload = {
+      player_name: cleanPlayer,
+      legend: cleanLegend,
+      outcome: cleanOutcome,
+      rank: cleanRank,
+      kills: k,
+      deaths: d,
+      assists: a,
+      kd_ratio: kdRatio,
+      damage: dmg,
+      placement: `#${place}`,
+      ingestion_mode: 'MANUAL_PROTOCOL'
+    };
+
+    // 1. Insert into apex_match_telemetry
+    const { data: inserted, error: insertErr } = await supabase
+      .from('apex_match_telemetry')
+      .insert({
+        user_id: userId,
+        game_title: 'Apex Legends',
+        ingestion_type: 'MANUAL_ENTRY',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      })
+      .select()
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    // 2. Persist Player Handle & Rank to Profiles
+    try {
+      await supabase
+        .from('profiles')
+        .update({
+          apex_player_id: cleanPlayer,
+          apex_rank: cleanRank
+        })
+        .eq('id', userId);
+    } catch (e) {
+      console.warn('[Apex Profile Update Warning]:', e.message);
+    }
+
+    console.log(`✅ Stored Apex Match for ${cleanPlayer} in apex_match_telemetry: ${inserted.id}`);
+    return res.status(200).json({
+      success: true,
+      telemetry: inserted,
+      rating: performanceScore,
+      player: cleanPlayer,
+      rank: cleanRank
+    });
+  } catch (err) {
+    console.error('[Manual Apex Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to ingest Apex telemetry.' });
+  }
+});
+
+// UNLINK APEX PROFILE
+app.post('/api/unlink-apex', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID is required.' });
+
+    await supabase
+      .from('profiles')
+      .update({
+        apex_player_id: null,
+        apex_rank: 'UNRATED'
+      })
+      .eq('id', userId);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/unlink-game
+app.post('/api/unlink-game', async (req, res) => {
+  try {
+    const { userId, gameKey } = req.body;
+
+    if (!userId || !gameKey) {
+      return res.status(400).json({ error: 'User ID and gameKey are required.' });
+    }
+
+    const key = gameKey.toLowerCase();
+    let profileUpdate = {};
+    let telemetryTable = '';
+
+    if (key.includes('val')) {
+      profileUpdate = { valorant_id: null, valorant_ign: null, valorant_tag: null, valorant_rank: 'UNRATED' };
+      telemetryTable = 'valorant_match_telemetry';
+    } else if (key.includes('dota')) {
+      profileUpdate = { dota2_steam_id: null, steam_id: null, dota2_rank: 'UNRATED' };
+      telemetryTable = 'dota2_match_telemetry';
+    } else if (key.includes('lol') || key.includes('league')) {
+      profileUpdate = { lol_puuid: null, lol_riot_id: null, lol_rank: 'UNRATED' };
+      telemetryTable = 'lol_match_telemetry';
+    } else if (key.includes('cs') || key.includes('counter')) {
+      profileUpdate = { cs2_steam_id: null, steam_id: null, cs2_rank: 'UNRATED' };
+      telemetryTable = 'cs2_match_telemetry';
+    } else if (key.includes('apex')) {
+      profileUpdate = { apex_player_id: null, apex_rank: 'UNRATED' };
+      telemetryTable = 'apex_match_telemetry';
+    }
+
+    // 1. Update Profile in Supabase safely
+    if (Object.keys(profileUpdate).length > 0) {
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update(profileUpdate)
+        .eq('id', userId);
+
+      if (profileErr) {
+        console.warn('[Unlink Profile Warning]:', profileErr.message);
+        // Fallback with minimal safe columns
+        if (key.includes('val')) {
+          await supabase.from('profiles').update({ valorant_ign: null, valorant_tag: null }).eq('id', userId);
+        } else if (key.includes('dota')) {
+          await supabase.from('profiles').update({ steam_id: null }).eq('id', userId);
+        } else if (key.includes('lol') || key.includes('league')) {
+          await supabase.from('profiles').update({ lol_puuid: null }).eq('id', userId);
+        } else if (key.includes('cs') || key.includes('counter')) {
+          await supabase.from('profiles').update({ steam_id: null }).eq('id', userId);
+        }
+      }
+    }
+
+    // 2. Delete Telemetry Rows for this Game
+    if (telemetryTable) {
+      const { error: telemErr } = await supabase
+        .from(telemetryTable)
+        .delete()
+        .eq('user_id', userId);
+
+      if (telemErr) {
+        console.warn(`[Telemetry Purge Warning on ${telemetryTable}]:`, telemErr.message);
+      }
+    }
+
+    console.log(`✅ Successfully unlinked ${gameKey} for user: ${userId}`);
+    return res.status(200).json({
+      success: true,
+      message: `${gameKey} unlinked successfully.`
+    });
+  } catch (err) {
+    console.error('[Unlink Catch Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to unlink account.' });
+  }
+});
+
+// GET latest F1 25 match telemetry and LCC statistics
+app.get('/api/f1-telemetry', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('f1_match_telemetry')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    if (error) throw error;
+
+    const telemetry = (data || []).reverse();
+
+    if (telemetry.length === 0) {
+      return res.json({
+        totalLaps: 0,
+        bestLap: '0.000',
+        topSpeed: 0,
+        pBaseline: '0.0',
+        pCurrent: '0.0',
+        linearGrowthSlope: '0.00',
+        recentMatches: []
+      });
+    }
+
+    const scores = telemetry.map(t => parseFloat(t.performance_score || 70));
+    const validLapTimes = telemetry.map(t => parseFloat(t.lap_time_seconds)).filter(t => t > 0);
+    const bestLap = validLapTimes.length ? Math.min(...validLapTimes).toFixed(3) : '0.000';
+    const maxSpeed = Math.max(...telemetry.map(t => t.top_speed_kmh || 0));
+
+    // LCC Linear Growth Slope Algorithm (First 3 vs Last 3 Sessions)
+    const initialSamples = scores.slice(0, 3);
+    const recentSamples = scores.slice(-3);
+
+    const pBaseline = (initialSamples.reduce((a, b) => a + b, 0) / initialSamples.length).toFixed(1);
+    const pCurrent = (recentSamples.reduce((a, b) => a + b, 0) / recentSamples.length).toFixed(1);
+    const growthSlope = ((parseFloat(pCurrent) - parseFloat(pBaseline)) / Math.max(1, telemetry.length)).toFixed(2);
+
+    return res.json({
+      totalLaps: telemetry.length,
+      bestLap: parseFloat(bestLap),
+      topSpeed: maxSpeed,
+      pBaseline,
+      pCurrent,
+      linearGrowthSlope: growthSlope,
+      recentMatches: telemetry.map(t => ({
+        id: t.id,
+        lapNumber: t.lap_number,
+        lapTime: t.lap_time_seconds,
+        totalSessionLaps: t.total_session_laps || 1,
+        trackName: t.track_name || 'Red Bull Ring (Austria)',
+        sessionMode: t.session_mode || 'Time Trial',
+        weather: t.weather || 'Clear / Sunny ☀️',
+        tyreCompound: t.tyre_compound || 'SOFT (C5)',
+        tcMode: t.tc_mode || 'Off',
+        absMode: t.abs_mode || 'Off',
+        gearboxMode: t.gearbox_mode || 'Manual',
+        topSpeed: t.top_speed_kmh,
+        throttle: t.avg_throttle,
+        brake: t.avg_brake,
+        score: t.performance_score,
+        createdAt: t.created_at
+      }))
+    });
+  } catch (err) {
+    console.error('[F1 Telemetry Route Error]:', err.message);
+    res.status(500).json({ error: 'Failed to fetch F1 telemetry' });
+  }
+});
+
+// POST dedicated manual entry endpoint for EA FC 27
+app.post('/api/manual-entry-eafc', async (req, res) => {
+  try {
+    const { userId, division, skillRating, outcome, goalsScored, goalsConceded, possession, passAccuracy, xG, shotsOnTarget } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    const gScored = parseInt(goalsScored, 10) || 0;
+    const gConceded = parseInt(goalsConceded, 10) || 0;
+    const poss = parseFloat(possession) || 50;
+    const passAcc = parseFloat(passAccuracy) || 80;
+    const xgVal = parseFloat(xG) || parseFloat((gScored * 0.85).toFixed(1));
+    const shots = parseInt(shotsOnTarget, 10) || gScored;
+
+    // Algorithmic Competitive Performance Score (50.0 - 99.0 scale)
+    const outcomeMultiplier = outcome === 'VICTORY' ? 1.15 : outcome === 'DRAW' ? 1.0 : 0.85;
+    const rawScore = (gScored * 8) - (gConceded * 4) + (poss * 0.4) + (passAcc * 0.45) + (shots * 1.2);
+    const performanceScore = Math.min(99.0, Math.max(50.0, parseFloat((rawScore * outcomeMultiplier).toFixed(1))));
+
+    const payload = {
+      division: division || 'Elite Division',
+      skill_rating: skillRating || '2150',
+      outcome: outcome || 'VICTORY',
+      goals_scored: gScored,
+      goals_conceded: gConceded,
+      score_display: `${gScored} - ${gConceded}`,
+      possession: poss,
+      pass_accuracy: passAcc,
+      xg: xgVal,
+      shots_on_target: shots,
+      performance_score: performanceScore
+    };
+
+    const { data, error } = await supabase
+      .from('fc27_match_telemetry')
+      .insert([{
+        user_id: userId,
+        game_title: 'EA FC 27',
+        ingestion_type: 'MANUAL_SCORECARD',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json({
+      message: 'EA FC 27 match recorded successfully',
+      performanceScore,
+      match: data
+    });
+  } catch (err) {
+    console.error('[EA FC Ingestion Error]:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to record FC 27 match' });
+  }
+});
+
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
-    uptime: process.uptime(),
-    udpListenerPort: udpPort
+    uptime: process.uptime()
   });
 });
 
 app.listen(port, () => {
   console.log(`[Express API] Server running on http://localhost:${port}`);
 });
+
+// ----------------------------------------------------
+// NATIVE F1 25 UDP TELEMETRY SOCKET LISTENER (PORT 20777)
+// ----------------------------------------------------
+const F1_PORT = 20777;
+const f1Socket = dgram.createSocket('udp4');
+
+const TRACK_MAP = {
+  0: 'Melbourne (Albert Park)',
+  1: 'Paul Ricard',
+  2: 'Shanghai',
+  3: 'Sakhir (Bahrain)',
+  4: 'Barcelona-Catalunya',
+  5: 'Monaco',
+  6: 'Montreal (Gilles Villeneuve)',
+  7: 'Silverstone',
+  8: 'Hockenheim',
+  9: 'Hungaroring',
+  10: 'Spa-Francorchamps',
+  11: 'Monza',
+  12: 'Marina Bay (Singapore)',
+  13: 'Suzuka',
+  14: 'Yas Marina (Abu Dhabi)',
+  15: 'Circuit of the Americas',
+  16: 'Interlagos (Brazil)',
+  17: 'Red Bull Ring (Austria)',
+  18: 'Sochi',
+  19: 'Mexico City',
+  20: 'Baku (Azerbaijan)',
+  26: 'Zandvoort',
+  27: 'Imola',
+  28: 'Portimão',
+  29: 'Jeddah',
+  30: 'Miami',
+  31: 'Las Vegas',
+  32: 'Losail (Qatar)'
+};
+
+const WEATHER_MAP = {
+  0: 'Clear / Sunny ☀️',
+  1: 'Light Cloud 🌤️',
+  2: 'Overcast ☁️',
+  3: 'Light Rain 🌦️',
+  4: 'Heavy Rain 🌧️',
+  5: 'Storm ⛈️'
+};
+
+const TYRE_MAP = {
+  16: 'SOFT (C5)',
+  17: 'MEDIUM (C4)',
+  18: 'HARD (C3)',
+  7: 'INTERMEDIATE',
+  8: 'WET'
+};
+
+// Clean in-memory session buffer
+let sessionData = {
+  trackName: 'Melbourne (Albert Park)',
+  weather: 'Clear / Sunny ☀️',
+  tyreCompound: 'SOFT (C5)',
+  tcMode: 'Off',
+  absMode: 'Off',
+  gearboxMode: 'Manual',
+  laps: [],
+  topSpeed: 0,
+  throttleSamples: [],
+  brakeSamples: [],
+  lastLapTimeMS: 0,
+  lastRecordedLapNum: -1,
+  isCommitting: false
+};
+
+let sessionInactivityTimer = null;
+
+async function finalizeSessionStint() {
+  if (sessionData.isCommitting || !sessionData.laps.length) return;
+  sessionData.isCommitting = true;
+
+  const validLaps = sessionData.laps.filter(t => t > 10.0);
+  if (!validLaps.length) {
+    sessionData.isCommitting = false;
+    return;
+  }
+
+  const bestLapTime = Math.min(...validLaps);
+  const bestLapIndex = validLaps.indexOf(bestLapTime) + 1;
+  const totalLapsDriven = validLaps.length;
+  const topSpeed = sessionData.topSpeed || 295;
+
+  const avgThrottle = sessionData.throttleSamples.length
+    ? ((sessionData.throttleSamples.reduce((a, b) => a + b, 0) / sessionData.throttleSamples.length) * 100).toFixed(1)
+    : 82.5;
+  const avgBrake = sessionData.brakeSamples.length
+    ? ((sessionData.brakeSamples.reduce((a, b) => a + b, 0) / sessionData.brakeSamples.length) * 100).toFixed(1)
+    : 14.0;
+
+  const perfScore = Math.min(99.0, Math.max(70.0, 100 - (bestLapTime - 65) * 2)).toFixed(1);
+
+  console.log(
+    `\x1b[32m[F1 Lap Ingested]\x1b[0m Lap ${bestLapIndex}: ${bestLapTime}s | Track: ${sessionData.trackName} | Mode: Time Trial | Weather: ${sessionData.weather} | Tyre: ${sessionData.tyreCompound} | TC: ${sessionData.tcMode} | ABS: ${sessionData.absMode} | Gear: ${sessionData.gearboxMode} (Best of ${totalLapsDriven} laps)`
+  );
+
+  try {
+    await supabase.from('f1_match_telemetry').insert([{
+      lap_number: bestLapIndex,
+      lap_time_seconds: bestLapTime,
+      total_session_laps: totalLapsDriven,
+      top_speed_kmh: topSpeed,
+      avg_throttle: parseFloat(avgThrottle),
+      avg_brake: parseFloat(avgBrake),
+      performance_score: parseFloat(perfScore),
+      track_name: sessionData.trackName,
+      session_mode: 'Time Trial Stint',
+      weather: sessionData.weather,
+      tyre_compound: sessionData.tyreCompound,
+      tc_mode: sessionData.tcMode,
+      abs_mode: sessionData.absMode,
+      gearbox_mode: sessionData.gearboxMode,
+      driver_name: 'Driver'
+    }]);
+  } catch (err) {
+    console.error('[Supabase Save Exception]:', err.message);
+  }
+
+  // Reset buffer for fresh stint
+  sessionData.laps = [];
+  sessionData.topSpeed = 0;
+  sessionData.throttleSamples = [];
+  sessionData.brakeSamples = [];
+  sessionData.lastLapTimeMS = 0;
+  sessionData.lastRecordedLapNum = -1;
+  sessionData.isCommitting = false;
+}
+
+f1Socket.on('listening', () => {
+  const addr = f1Socket.address();
+  console.log(`\x1b[36m[GradeGamer F1 Stint Engine]\x1b[0m Active on 0.0.0.0:${addr.port}`);
+});
+
+f1Socket.on('message', async (msg) => {
+  if (msg.length < 24) return;
+
+  const packetId = msg.readUInt8(6);
+  const playerCarIndex = msg.length >= 28 ? msg.readUInt8(27) : 0;
+
+  // Session timer reset: Finalizes stint 8s after you stop driving / exit to menu
+  if (sessionInactivityTimer) clearTimeout(sessionInactivityTimer);
+  sessionInactivityTimer = setTimeout(() => {
+    finalizeSessionStint();
+  }, 8000);
+
+  // 1. SESSION PACKET (Packet ID 1) -> Track, Weather, Assists
+  if (packetId === 1 && msg.length >= 55) {
+    const weatherId = msg.readUInt8(29);
+    const trackId = msg.readInt8(36);
+    const gearboxByte = msg.readUInt8(45);
+    const absByte = msg.readUInt8(53);
+    const tcByte = msg.readUInt8(54);
+
+    if (WEATHER_MAP[weatherId]) sessionData.weather = WEATHER_MAP[weatherId];
+    if (TRACK_MAP[trackId]) sessionData.trackName = TRACK_MAP[trackId];
+    sessionData.gearboxMode = gearboxByte === 3 ? 'Auto' : 'Manual';
+    sessionData.absMode = absByte === 1 ? 'On' : 'Off';
+    sessionData.tcMode = tcByte === 0 ? 'Off' : tcByte === 1 ? 'Medium' : 'Full';
+  }
+
+  // 2. CAR STATUS (Packet ID 7) -> Tyre Compound
+  if (packetId === 7) {
+    const carOffset = 29 + (playerCarIndex * 45);
+    if (msg.length >= carOffset + 27) {
+      const visualTyre = msg.readUInt8(carOffset + 26);
+      if (TYRE_MAP[visualTyre]) sessionData.tyreCompound = TYRE_MAP[visualTyre];
+    }
+  }
+
+  // 3. CAR TELEMETRY (Packet ID 6) -> Speed, Throttle, Brake
+  if (packetId === 6 && msg.length >= 29 + (playerCarIndex + 1) * 50) {
+    const carOffset = 29 + (playerCarIndex * 60);
+    const speed = msg.readUInt16LE(carOffset);
+    const throttle = msg.readFloatLE(carOffset + 2);
+    const brake = msg.readFloatLE(carOffset + 6);
+
+    if (speed > sessionData.topSpeed) sessionData.topSpeed = speed;
+    sessionData.throttleSamples.push(throttle);
+    sessionData.brakeSamples.push(brake);
+  }
+
+  // 4. LAP DATA (Packet ID 2) -> Record Laps to Memory
+  if (packetId === 2) {
+    const lapOffset = 29 + (playerCarIndex * 57);
+    if (msg.length >= lapOffset + 18) {
+      const lastLapTimeInMS = msg.readUInt32LE(lapOffset + 0);
+      const lapDistance = msg.readFloatLE(lapOffset + 8);
+      const currentLapNum = msg.readUInt8(lapOffset + 14);
+
+      if (
+        lastLapTimeInMS > 10000 &&
+        lastLapTimeInMS !== sessionData.lastLapTimeMS &&
+        (currentLapNum !== sessionData.lastRecordedLapNum || (lapDistance >= 0 && lapDistance < 100))
+      ) {
+        sessionData.lastLapTimeMS = lastLapTimeInMS;
+        sessionData.lastRecordedLapNum = currentLapNum;
+
+        const lapSec = parseFloat((lastLapTimeInMS / 1000).toFixed(3));
+        sessionData.laps.push(lapSec);
+
+        console.log(`\x1b[36m[Lap Added to Stint]\x1b[0m Lap #${sessionData.laps.length}: ${lapSec}s | Current Session Best: ${Math.min(...sessionData.laps)}s`);
+      }
+    }
+  }
+});
+
+try {
+  f1Socket.bind(F1_PORT);
+} catch (err) {
+  console.error('[F1 Socket Bind Error]:', err.message);
+}
+

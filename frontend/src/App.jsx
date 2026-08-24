@@ -25,17 +25,18 @@ import {
 function App() {
   const { user, profile, refreshProfile, loading, error, login, register, logout, setError, deleteAccount } = useAuth();
   
-  // View control: 'home' | 'auth' | 'dashboard' | 'reviews' | 'rosters' | 'profile' | 'messages' | 'register'
+  // View control: 'home' | 'auth' | 'dashboard' | 'reviews' | 'rosters' | 'profile' | 'messages' | 'register' | 'game-data'
   const [view, setView] = useState(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname.replace(/^\//, '');
       if (path === 'peer-reviews' || path === 'reviews') return 'reviews';
       if (path === 'roster-management' || path === 'rosters') return 'rosters';
-      if (path === 'verified-resume' || path === 'profile') return 'profile';
-      if (['messages', 'dashboard', 'home', 'register', 'about', 'game-data'].includes(path)) {
+      if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') return 'profile';
+      if (path === 'game-data' || path === 'gamedata') return 'game-data';
+      if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
         return path;
       }
-      const saved = localStorage.getItem('activeView');
+      const saved = localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
       return saved || 'home';
     }
     return 'home';
@@ -48,16 +49,16 @@ function App() {
     let targetView = newView;
     let targetPath = `/${newView}`;
 
-    if (newView === 'peer-reviews') {
+    if (newView === 'peer-reviews' || newView === 'reviews') {
       targetView = 'reviews';
       targetPath = '/peer-reviews';
-    } else if (newView === 'roster-management') {
+    } else if (newView === 'roster-management' || newView === 'rosters') {
       targetView = 'rosters';
       targetPath = '/roster-management';
-    } else if (newView === 'verified-resume') {
+    } else if (newView === 'verified-resume' || newView === 'verified-resumes' || newView === 'profile') {
       targetView = 'profile';
       targetPath = '/verified-resume';
-    } else if (newView === 'game-data') {
+    } else if (newView === 'game-data' || newView === 'gamedata') {
       targetView = 'game-data';
       targetPath = '/game-data';
     } else if (newView === 'home') {
@@ -65,6 +66,7 @@ function App() {
     }
 
     setView(targetView);
+    localStorage.setItem('gg_active_view', targetView);
     localStorage.setItem('activeView', targetView);
     if (typeof window !== 'undefined') {
       if (window.location.pathname !== targetPath) {
@@ -81,9 +83,11 @@ function App() {
           setView('reviews');
         } else if (path === 'roster-management' || path === 'rosters') {
           setView('rosters');
-        } else if (path === 'verified-resume' || path === 'profile') {
+        } else if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') {
           setView('profile');
-        } else if (['messages', 'dashboard', 'home', 'register', 'about', 'game-data'].includes(path)) {
+        } else if (path === 'game-data' || path === 'gamedata') {
+          setView('game-data');
+        } else if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
           setView(path);
         } else {
           setView('home');
@@ -197,22 +201,36 @@ function App() {
 
   // Auto route transitions
   React.useEffect(() => {
+    if (loading) return;
+
     if (user) {
-      // If user is logged in, they can view home or any tab.
-      // Only redirect if they are currently on 'auth' or if there is a saved view.
-      const saved = localStorage.getItem('activeView');
-      if (saved && saved !== 'home' && saved !== 'auth') {
-        setView(saved);
+      // Restore URL path or saved view upon authentication resolution
+      const path = typeof window !== 'undefined' ? window.location.pathname.replace(/^\//, '') : '';
+      let urlView = null;
+      if (path === 'peer-reviews' || path === 'reviews') urlView = 'reviews';
+      else if (path === 'roster-management' || path === 'rosters') urlView = 'rosters';
+      else if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') urlView = 'profile';
+      else if (path === 'game-data' || path === 'gamedata') urlView = 'game-data';
+      else if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) urlView = path;
+
+      const saved = localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
+
+      if (urlView && urlView !== 'auth') {
+        setView(urlView);
+        localStorage.setItem('gg_active_view', urlView);
+        localStorage.setItem('activeView', urlView);
+      } else if (saved && saved !== 'auth' && saved !== 'home') {
+        updateView(saved);
       } else if (view === 'auth') {
         updateView('dashboard');
       }
     } else {
-      // If user is logged out, restrict to 'home' or 'auth'
-      if (view !== 'home' && view !== 'auth') {
+      // If user is logged out, restrict to 'home', 'auth', 'about', or 'register'
+      if (view !== 'home' && view !== 'auth' && view !== 'about' && view !== 'register') {
         updateView('home');
       }
     }
-  }, [user]);
+  }, [user, loading]);
   
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');

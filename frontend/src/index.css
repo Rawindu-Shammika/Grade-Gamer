@@ -133,3 +133,10 @@ html.light .bg-cyan-500\/10 {
   animation: fadeIn 0.8s ease-in-out forwards;
 }
 
+@media print {
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
