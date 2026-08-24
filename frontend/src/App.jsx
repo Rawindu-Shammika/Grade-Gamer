@@ -22,22 +22,64 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+// Pathname to View mapper
+const getViewFromPath = (path) => {
+  if (!path || typeof path !== 'string') return 'home';
+  const normalized = path.replace(/^\//, '').toLowerCase().trim();
+  switch (normalized) {
+    case 'dashboard':
+      return 'dashboard';
+    case 'game-data':
+    case 'gamedata':
+      return 'game-data';
+    case 'peer-reviews':
+    case 'reviews':
+      return 'reviews';
+    case 'verified-resume':
+    case 'verified-resumes':
+    case 'profile':
+      return 'profile';
+    case 'roster-management':
+    case 'rosters':
+      return 'rosters';
+    case 'messages':
+      return 'messages';
+    case 'about':
+      return 'about';
+    case 'auth':
+    case 'signin':
+    case 'login':
+      return 'auth';
+    case 'register':
+    case 'signup':
+      return 'register';
+    case '':
+    case 'home':
+    default:
+      return 'home';
+  }
+};
+
+const pathToViewMap = {
+  home: '/',
+  dashboard: '/dashboard',
+  'game-data': '/game-data',
+  reviews: '/peer-reviews',
+  profile: '/verified-resume',
+  rosters: '/roster-management',
+  messages: '/messages',
+  about: '/about',
+  auth: '/auth',
+  register: '/register'
+};
+
 function App() {
   const { user, profile, refreshProfile, loading, error, login, register, logout, setError, deleteAccount } = useAuth();
   
-  // View control: 'home' | 'auth' | 'dashboard' | 'reviews' | 'rosters' | 'profile' | 'messages' | 'register' | 'game-data'
+  // Initial state from current URL
   const [view, setView] = useState(() => {
     if (typeof window !== 'undefined') {
-      const path = window.location.pathname.replace(/^\//, '');
-      if (path === 'peer-reviews' || path === 'reviews') return 'reviews';
-      if (path === 'roster-management' || path === 'rosters') return 'rosters';
-      if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') return 'profile';
-      if (path === 'game-data' || path === 'gamedata') return 'game-data';
-      if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
-        return path;
-      }
-      const saved = localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
-      return saved || 'home';
+      return getViewFromPath(window.location.pathname);
     }
     return 'home';
   });
@@ -45,53 +87,25 @@ function App() {
   // Tab control: 'signin' | 'signup'
   const [activeTab, setActiveTab] = useState('signin');
 
+  // Unified view and URL updater
   const updateView = (newView) => {
-    let targetView = newView;
-    let targetPath = `/${newView}`;
+    const targetView = newView;
+    const targetPath = pathToViewMap[targetView] || '/';
 
-    if (newView === 'peer-reviews' || newView === 'reviews') {
-      targetView = 'reviews';
-      targetPath = '/peer-reviews';
-    } else if (newView === 'roster-management' || newView === 'rosters') {
-      targetView = 'rosters';
-      targetPath = '/roster-management';
-    } else if (newView === 'verified-resume' || newView === 'verified-resumes' || newView === 'profile') {
-      targetView = 'profile';
-      targetPath = '/verified-resume';
-    } else if (newView === 'game-data' || newView === 'gamedata') {
-      targetView = 'game-data';
-      targetPath = '/game-data';
-    } else if (newView === 'home') {
-      targetPath = '/';
+    if (typeof window !== 'undefined' && window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
     }
 
     setView(targetView);
     localStorage.setItem('gg_active_view', targetView);
     localStorage.setItem('activeView', targetView);
-    if (typeof window !== 'undefined') {
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState(null, '', targetPath);
-      }
-    }
   };
 
-  React.useEffect(() => {
+  // Listen for browser Back/Forward navigation
+  useEffect(() => {
     if (typeof window !== 'undefined') {
       const handlePopState = () => {
-        const path = window.location.pathname.replace(/^\//, '');
-        if (path === 'peer-reviews' || path === 'reviews') {
-          setView('reviews');
-        } else if (path === 'roster-management' || path === 'rosters') {
-          setView('rosters');
-        } else if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') {
-          setView('profile');
-        } else if (path === 'game-data' || path === 'gamedata') {
-          setView('game-data');
-        } else if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) {
-          setView(path);
-        } else {
-          setView('home');
-        }
+        setView(getViewFromPath(window.location.pathname));
       };
       window.addEventListener('popstate', handlePopState);
       return () => window.removeEventListener('popstate', handlePopState);
@@ -200,33 +214,23 @@ function App() {
   }, [user]);
 
   // Auto route transitions
-  React.useEffect(() => {
+  useEffect(() => {
     if (loading) return;
 
     if (user) {
-      // Restore URL path or saved view upon authentication resolution
-      const path = typeof window !== 'undefined' ? window.location.pathname.replace(/^\//, '') : '';
-      let urlView = null;
-      if (path === 'peer-reviews' || path === 'reviews') urlView = 'reviews';
-      else if (path === 'roster-management' || path === 'rosters') urlView = 'rosters';
-      else if (path === 'verified-resume' || path === 'verified-resumes' || path === 'profile') urlView = 'profile';
-      else if (path === 'game-data' || path === 'gamedata') urlView = 'game-data';
-      else if (['messages', 'dashboard', 'home', 'register', 'about'].includes(path)) urlView = path;
+      // Prioritize current browser URL path
+      const currentUrlPath = typeof window !== 'undefined' ? window.location.pathname : '/';
+      const currentUrlView = getViewFromPath(currentUrlPath);
 
-      const saved = localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
-
-      if (urlView && urlView !== 'auth') {
-        setView(urlView);
-        localStorage.setItem('gg_active_view', urlView);
-        localStorage.setItem('activeView', urlView);
-      } else if (saved && saved !== 'auth' && saved !== 'home') {
-        updateView(saved);
-      } else if (view === 'auth') {
+      if (currentUrlView === 'auth' || currentUrlView === 'register') {
         updateView('dashboard');
+      } else if (currentUrlView && currentUrlView !== 'home') {
+        setView(currentUrlView);
       }
     } else {
-      // If user is logged out, restrict to 'home', 'auth', 'about', or 'register'
-      if (view !== 'home' && view !== 'auth' && view !== 'about' && view !== 'register') {
+      // If user is logged out, restrict protected views to 'home'
+      const publicViews = ['home', 'auth', 'about', 'register'];
+      if (!publicViews.includes(view)) {
         updateView('home');
       }
     }
