@@ -143,6 +143,7 @@ const getTelemetryTable = (gameKey) => {
   if (g.includes('dota')) return 'dota2_match_telemetry';
   if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
   if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  if (g.includes('apex')) return 'apex_match_telemetry';
   return 'valorant_match_telemetry';
 };
 
@@ -331,6 +332,8 @@ export const HomeDashboard = () => {
             setBoundHandle(`STEAM ID: ${p.cs2_steam_id || p.steam_id}`);
           } else if (selectedGame === 'League of Legends' && (p.lol_riot_id || p.lol_puuid)) {
             setBoundHandle(p.lol_riot_id ? `${p.lol_riot_id}` : `RIOT PUUID: ${p.lol_puuid.slice(0, 10)}...`);
+          } else if (selectedGame === 'Apex Legends' && p.apex_player_id) {
+            setBoundHandle(`APEX ID: ${p.apex_player_id}`);
           } else if (p.valorant_id || (p.valorant_ign && p.valorant_tag)) {
             setBoundHandle(p.valorant_id || `${p.valorant_ign}#${p.valorant_tag || ''}`);
           } else {
@@ -405,6 +408,9 @@ export const HomeDashboard = () => {
     if (selectedGame === 'Counter-Strike 2') {
       return payload?.competitive_rank || profile?.cs2_rank || 'GLOBAL ELITE';
     }
+    if (selectedGame === 'Apex Legends') {
+      return payload?.rank || profile?.apex_rank || 'DIAMOND IV';
+    }
     return payload?.rank || 'UNRATED';
   }, [selectedGame, payload, profile]);
 
@@ -416,7 +422,7 @@ export const HomeDashboard = () => {
 
   const dashLCC = React.useMemo(() => {
     const list = [...(activeDashboardMatches || [])].reverse();
-    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
+    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
       const dotaLcc = calculateDotaLinearGrowth(list);
       return {
         slopeNumeric: dotaLcc.slope,

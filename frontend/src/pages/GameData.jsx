@@ -25,6 +25,7 @@ const getTelemetryTable = (gameKey) => {
   if (g.includes('dota')) return 'dota2_match_telemetry';
   if (g.includes('lol') || g.includes('league')) return 'lol_match_telemetry';
   if (g.includes('cs') || g.includes('counter-strike')) return 'cs2_match_telemetry';
+  if (g.includes('apex')) return 'apex_match_telemetry';
   return 'valorant_match_telemetry';
 };
 
@@ -114,7 +115,9 @@ export default function GameData() {
   const [lolRegion, setLolRegion] = useState('sea');
   const [isLolBound, setIsLolBound] = useState(false);
 
-  // Counter-Strike 2 Manual Telemetry Form state
+  // Counter-Strike 2 API & Manual Telemetry Form state
+  const [cs2SteamId, setCs2SteamId] = useState('');
+  const [isCs2Bound, setIsCs2Bound] = useState(false);
   const [cs2Form, setCs2Form] = useState({
     map: 'DE_MIRAGE',
     outcome: 'VICTORY',
@@ -124,6 +127,22 @@ export default function GameData() {
     assists: '',
     adr: '',
     hsPercent: ''
+  });
+
+  // Apex Legends Manual Telemetry Form state
+  const [apexMatches, setApexMatches] = useState([]);
+  const [isFetchingApex, setIsFetchingApex] = useState(false);
+  const [isSubmittingApex, setIsSubmittingApex] = useState(false);
+  const [apexManualForm, setApexManualForm] = useState({
+    playerName: '',
+    legend: 'Wraith',
+    outcome: 'CHAMPION',
+    rankTier: 'DIAMOND (15,000 - 19,999 RP)',
+    kills: '5',
+    deaths: '1',
+    assists: '3',
+    damage: '1450',
+    placement: '1'
   });
 
   // Unlink Modal State
@@ -213,11 +232,27 @@ export default function GameData() {
 
         // CS2 check
         if (data.cs2_steam_id || data.steam_id) {
-          setCs2SteamId(data.cs2_steam_id || data.steam_id);
-          setIsCs2Bound(true);
+          if (typeof setCs2SteamId === 'function') {
+            setCs2SteamId(data.cs2_steam_id || data.steam_id);
+          }
+          if (typeof setIsCs2Bound === 'function') {
+            setIsCs2Bound(true);
+          }
         } else {
-          setIsCs2Bound(false);
-          setCs2SteamId('');
+          if (typeof setIsCs2Bound === 'function') {
+            setIsCs2Bound(false);
+          }
+          if (typeof setCs2SteamId === 'function') {
+            setCs2SteamId('');
+          }
+        }
+
+        // Apex check
+        if (data.apex_player_id) {
+          setApexManualForm(prev => ({
+            ...prev,
+            playerName: data.apex_player_id
+          }));
         }
 
         // LoL check
@@ -235,6 +270,59 @@ export default function GameData() {
     };
     checkBoundProfile();
   }, [user]);
+
+  // Direct fetch function for Apex Legends
+  const fetchApexTelemetry = async (targetUserId) => {
+    const uid = targetUserId || user?.id || userProfile?.id;
+    if (!uid) return;
+
+    setIsFetchingApex(true);
+    try {
+      const { data, error } = await supabase
+        .from('apex_match_telemetry')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[Apex Fetch DB Error]:', error.message);
+        return;
+      }
+
+      if (data) {
+        setApexMatches(data);
+      }
+    } catch (err) {
+      console.error('[Apex Fetch Exception]:', err);
+    } finally {
+      setIsFetchingApex(false);
+    }
+  };
+
+  // Auto-trigger whenever user, userProfile, or game selection changes
+  useEffect(() => {
+    const uid = user?.id || userProfile?.id;
+    if (selectedGame?.toLowerCase().includes('apex') && uid) {
+      fetchApexTelemetry(uid);
+    }
+  }, [selectedGame, user?.id, userProfile?.id]);
+
+  // Calculate LCC specifically for Apex
+  const apexLcc = React.useMemo(() => {
+    if (!apexMatches || apexMatches.length === 0) {
+      return { baseline: '0.0 Pts', current: '0.0 Pts', n: '0 Matches', slope: '0.00' };
+    }
+    const sorted = [...apexMatches].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const initial5 = sorted.slice(0, 5);
+    const recent5 = sorted.slice(-5);
+
+    const baseline = (initial5.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / initial5.length).toFixed(1);
+    const current = (recent5.reduce((sum, m) => sum + Number(m.performance_score || 0), 0) / recent5.length).toFixed(1);
+    const n = sorted.length;
+    const slope = ((Number(current) - Number(baseline)) / Math.max(1, n)).toFixed(2);
+
+    return { baseline: `${baseline} Pts`, current: `${current} Pts`, n: `${n} Matches`, slope };
+  }, [apexMatches]);
 
   const [syncToast, setSyncToast] = useState({ show: false, type: 'success' });
 
@@ -338,7 +426,7 @@ export default function GameData() {
 
   // Compute LCC strictly using ACS/Performance scores via unified calculator on active cycle matches
   const lccResults = React.useMemo(() => {
-    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
+    if (selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
       const dotaLcc = calculateDotaLinearGrowth(cycleMatches);
       const list = cycleMatches || [];
       const totalN = list.length;
@@ -366,6 +454,7 @@ export default function GameData() {
       if (selectedGame === 'League of Legends') return userProfile?.lol_rank || profile?.lol_rank || 'UNRATED';
       if (selectedGame === 'Dota 2') return userProfile?.dota2_rank || profile?.dota2_rank || 'UNRATED';
       if (selectedGame === 'Counter-Strike 2') return userProfile?.cs2_rank || profile?.cs2_rank || 'PREMIER (15,000 - 19,999)';
+      if (selectedGame === 'Apex Legends') return userProfile?.apex_rank || profile?.apex_rank || 'DIAMOND (15,000 - 19,999 RP)';
       return 'UNRATED';
     }
     const latest = cycleMatches[cycleMatches.length - 1];
@@ -378,6 +467,9 @@ export default function GameData() {
     }
     if (selectedGame === 'Counter-Strike 2') {
       return payload.competitive_rank || userProfile?.cs2_rank || profile?.cs2_rank || 'GLOBAL ELITE';
+    }
+    if (selectedGame === 'Apex Legends') {
+      return payload.rank || userProfile?.apex_rank || profile?.apex_rank || 'DIAMOND IV';
     }
     return payload.rank || 'UNRATED';
   }, [cycleMatches, selectedGame, profile, userProfile]);
@@ -691,6 +783,79 @@ export default function GameData() {
     }
   };
 
+  const handleApexManualSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const uid = user?.id || userProfile?.id;
+    if (!uid) {
+      alert('User authentication not ready. Please try again.');
+      return;
+    }
+
+    setIsSubmittingApex(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/manual-entry-apex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: uid,
+          ...apexManualForm
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit telemetry');
+
+      // Prepend immediately to state
+      if (data.telemetry) {
+        setApexMatches((prev) => [data.telemetry, ...(prev || [])]);
+      } else {
+        await fetchApexTelemetry(uid);
+      }
+
+      setUserProfile((prev) => ({
+        ...prev,
+        apex_player_id: data.player || apexManualForm.playerName,
+        apex_rank: data.rank || apexManualForm.rankTier
+      }));
+
+      if (typeof setSyncToast === 'function') {
+        setSyncToast({
+          show: true,
+          type: 'success',
+          title: 'APEX TELEMETRY INGESTED',
+          message: `${apexManualForm.outcome || 'CHAMPION'} (${apexManualForm.legend || 'Wraith'})`,
+          rating: data.rating || 50.0,
+          score: data.rating || 50.0,
+          acs: `${apexManualForm.damage} DMG`,
+          kd: parseFloat(((parseInt(apexManualForm.kills, 10) || 0) / Math.max(1, parseInt(apexManualForm.deaths, 10) || 1)).toFixed(2))
+        });
+      }
+
+      await fetchTelemetryHistory();
+    } catch (err) {
+      console.error('[Apex Ingestion Error]:', err);
+      if (typeof setSyncToast === 'function') {
+        setSyncToast({
+          show: true,
+          type: 'error',
+          title: 'INGESTION FAILED',
+          message: err.message || 'Failed to record match'
+        });
+      }
+    } finally {
+      setIsSubmittingApex(false);
+    }
+  };
+
+  const handleDeleteApexMatch = async (id) => {
+    if (!id) return;
+    const { error } = await supabase.from('apex_match_telemetry').delete().eq('id', id);
+    if (!error) {
+      setApexMatches((prev) => prev.filter((m) => m.id !== id));
+      await fetchTelemetryHistory();
+    }
+  };
+
   const handleConfirmUnlink = async () => {
     if (!user?.id) return;
     try {
@@ -741,6 +906,9 @@ export default function GameData() {
         } else if (key.includes('cs') || key.includes('counter')) {
           updated.cs2_steam_id = null;
           updated.cs2_rank = 'UNRATED';
+        } else if (key.includes('apex')) {
+          updated.apex_player_id = null;
+          updated.apex_rank = 'UNRATED';
         } else {
           updated.valorant_id = null;
           updated.valorant_ign = null;
@@ -1534,6 +1702,150 @@ export default function GameData() {
                       </div>
                     )}
                   </>
+                ) : selectedGame === 'Apex Legends' || selectedGame?.toLowerCase().includes('apex') ? (
+                  <>
+                    {/* APEX LEGENDS MANUAL TELEMETRY INGESTION NODE */}
+                    <div className="bg-[#0b1320] border border-cyan-500/20 rounded-xl p-6 shadow-lg mb-4 max-w-3xl">
+                      <div className="flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
+                        <div>
+                          <span className="text-[10px] font-mono tracking-widest text-cyan-400 font-bold uppercase block">
+                            MANUAL TELEMETRY INGESTION NODE
+                          </span>
+                          <h3 className="text-sm md:text-base font-black text-white uppercase tracking-wide">
+                            APEX LEGENDS MATCH TELEMETRY
+                          </h3>
+                        </div>
+                        <span className="px-2.5 py-1 text-[10px] font-mono font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded-full">
+                          MANUAL PROTOCOL
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-400 mb-5 font-mono leading-relaxed">
+                        Input individual Apex Legends match scores directly to calibrate your performance rating and LCC linear growth.
+                      </p>
+
+                      <form onSubmit={handleApexManualSubmit} className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Player Handle</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Zer0"
+                              value={apexManualForm.playerName}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, playerName: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Legend</label>
+                            <select
+                              value={apexManualForm.legend}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, legend: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            >
+                              <option value="Wraith">Wraith</option>
+                              <option value="Pathfinder">Pathfinder</option>
+                              <option value="Horizon">Horizon</option>
+                              <option value="Bloodhound">Bloodhound</option>
+                              <option value="Bangalore">Bangalore</option>
+                              <option value="Loba">Loba</option>
+                              <option value="Alter">Alter</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Outcome</label>
+                            <select
+                              value={apexManualForm.outcome}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, outcome: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            >
+                              <option value="CHAMPION">CHAMPION (1st)</option>
+                              <option value="TOP 3">TOP 3</option>
+                              <option value="TOP 5">TOP 5</option>
+                              <option value="DEFEAT">DEFEAT</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Rank / Standing</label>
+                            <select
+                              value={apexManualForm.rankTier}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, rankTier: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono font-bold text-amber-400"
+                            >
+                              <option value="APEX PREDATOR">APEX PREDATOR</option>
+                              <option value="MASTER">MASTER</option>
+                              <option value="DIAMOND (15,000 - 19,999 RP)">DIAMOND (15,000 - 19,999 RP)</option>
+                              <option value="PLATINUM (10,000 - 14,999 RP)">PLATINUM (10,000 - 14,999 RP)</option>
+                              <option value="GOLD (5,000 - 9,999 RP)">GOLD (5,000 - 9,999 RP)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Kills</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={apexManualForm.kills}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, kills: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Deaths</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={apexManualForm.deaths}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, deaths: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Assists</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={apexManualForm.assists}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, assists: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Damage</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={apexManualForm.damage}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, damage: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-mono text-slate-400 uppercase block mb-1">Placement (#)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="20"
+                              value={apexManualForm.placement}
+                              onChange={(e) => setApexManualForm({ ...apexManualForm, placement: e.target.value })}
+                              className="w-full bg-[#070d14] border border-slate-700/80 focus:border-cyan-400 rounded-lg p-2 text-xs text-white focus:outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isSubmittingApex}
+                          className="w-full py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black tracking-wider uppercase rounded-lg text-xs transition-all disabled:opacity-50 cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                        >
+                          {isSubmittingApex ? 'RECORDING TELEMETRY...' : 'RECORD APEX MATCH TELEMETRY'}
+                        </button>
+                      </form>
+                    </div>
+                  </>
                 ) : (
                   <div className="p-4 rounded-2xl bg-slate-800/20 border border-slate-700/50 text-center">
                     <p className="text-xs font-mono text-slate-400">Direct API integration for {selectedGame} is currently under construction. Please use another title.</p>
@@ -1637,18 +1949,147 @@ export default function GameData() {
       </div>
 
       {/* DATA PIPELINE SECTION */}
-      <div className="bg-[#0b131d] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <div className="text-[10px] font-black uppercase tracking-widest text-cyan-400">DATA PIPELINE</div>
-            <h3 className="text-lg font-black text-white uppercase tracking-tight">
-              {selectedGame} Telemetry Stream Log
-            </h3>
+      {selectedGame?.toLowerCase().includes('apex') ? (
+        <div className="bg-[#0b1320] border border-cyan-500/20 rounded-xl p-6 shadow-2xl font-mono">
+          <div className="flex items-center justify-between mb-4 border-b border-cyan-500/10 pb-3">
+            <div>
+              <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-widest block">
+                DATA PIPELINE
+              </span>
+              <h4 className="text-sm font-black text-white uppercase">
+                APEX LEGENDS TELEMETRY STREAM LOG
+              </h4>
+            </div>
+            <span className="text-xs text-cyan-400 bg-cyan-950/60 px-3 py-1 rounded border border-cyan-500/30">
+              {apexMatches?.length || 0} Packets Ingested
+            </span>
           </div>
-          <span className="text-xs font-mono bg-[#070b10] border border-slate-800 text-cyan-400 px-3 py-1 rounded-lg">
-            {cycleMatches.length} Packets Ingested
-          </span>
+
+          <div className="space-y-2">
+            {apexMatches && apexMatches.length > 0 ? (
+              apexMatches.map((m, idx) => {
+                const p = m.metrics_payload || {};
+                const outcome = p.outcome || 'CHAMPION';
+                const legend = p.legend || 'Wraith';
+                const isChamp = outcome.toUpperCase().includes('CHAMPION') || p.placement === '1' || p.placement === '#1';
+                const kills = p.kills ?? 0;
+                const deaths = p.deaths ?? 1;
+                const assists = p.assists ?? 0;
+                const damage = p.damage ?? 0;
+                const kd = p.kd_ratio || (kills / Math.max(1, deaths)).toFixed(2);
+                const rating = m.performance_score || '50.0';
+
+                return (
+                  <div
+                    key={m.id || idx}
+                    className="bg-[#060a12] border border-slate-800 hover:border-cyan-500/40 rounded-lg p-3.5 flex items-center justify-between transition-all"
+                  >
+                    {/* LEFT: OUTCOME & LEGEND */}
+                    <div className="flex items-center gap-4 min-w-[220px]">
+                      <div>
+                        <h5 className={`text-xs font-black uppercase ${isChamp ? 'text-cyan-400' : 'text-slate-200'}`}>
+                          {outcome}
+                        </h5>
+                        <span className="text-[9px] text-slate-500 block">SCORE</span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-black text-white uppercase">{legend}</h4>
+                          <span className="px-1.5 py-0.5 bg-cyan-950 border border-cyan-500/40 text-cyan-300 text-[9px] rounded uppercase">
+                            COMPETITIVE
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 block">
+                          {new Date(m.created_at || Date.now()).toLocaleDateString()} • ID: {m.id ? m.id.slice(0, 8) : 'apex_pkt'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* RIGHT: K/D, K/D/A, DAMAGE, RATING, DELETE */}
+                    <div className="flex items-center gap-6 text-right">
+                      <div>
+                        <span className="text-xs font-black text-slate-200">{kd}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">K/D</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-cyan-300">
+                          {kills} / <span className="text-rose-400">{deaths}</span> / {assists}
+                        </span>
+                        <span className="text-[9px] text-slate-500 uppercase block">K/D/A</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-amber-300">{Number(damage).toLocaleString()}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">DMG</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-cyan-400">{rating}</span>
+                        <span className="text-[9px] text-slate-500 uppercase block">RATING</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!m.id) return;
+                          try {
+                            const { error } = await supabase
+                              .from('apex_match_telemetry')
+                              .delete()
+                              .eq('id', m.id);
+
+                            if (!error) {
+                              setApexMatches((prev) => prev.filter((item) => item.id !== m.id));
+                            }
+                          } catch (err) {
+                            console.error('Failed to delete apex match:', err);
+                          }
+                        }}
+                        className="text-slate-500 hover:text-rose-400 p-1.5 rounded transition-colors group flex items-center justify-center cursor-pointer border-none bg-transparent"
+                        title="Delete Telemetry Packet"
+                      >
+                        <svg 
+                          xmlns="http://www.w3.org/2000/svg" 
+                          width="14" 
+                          height="14" 
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="2" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          className="opacity-60 group-hover:opacity-100 transition-opacity"
+                        >
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          <line x1="10" y1="11" x2="10" y2="17"></line>
+                          <line x1="14" y1="11" x2="14" y2="17"></line>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-10">
+                <span className="text-2xl block mb-2">📡</span>
+                <h5 className="text-xs font-bold text-slate-300 uppercase">No Apex Legends Telemetry Ingested</h5>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Use the Apex Legends ingestion node above to capture your first telemetry data packet.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
+      ) : (
+        <div className="bg-[#0b131d] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <div className="text-[10px] font-black uppercase tracking-widest text-cyan-400">DATA PIPELINE</div>
+              <h3 className="text-lg font-black text-white uppercase tracking-tight">
+                {selectedGame} Telemetry Stream Log
+              </h3>
+            </div>
+            <span className="text-xs font-mono bg-[#070b10] border border-slate-800 text-cyan-400 px-3 py-1 rounded-lg">
+              {cycleMatches.length} Packets Ingested
+            </span>
+          </div>
 
         {cycleMatches.length === 0 ? (
           <div className="text-center py-12 border border-dashed border-slate-800/80 rounded-xl bg-[#070d14]/50 space-y-2">
@@ -1661,13 +2102,14 @@ export default function GameData() {
         ) : (
           <div className="space-y-3">
             {cycleMatches.map((log, idx) => {
-              if (selectedGame === 'Valorant' || selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2') {
+              if (selectedGame === 'Valorant' || selectedGame === 'Dota 2' || selectedGame === 'League of Legends' || selectedGame === 'Counter-Strike 2' || selectedGame === 'Apex Legends') {
                 const isDota = selectedGame === 'Dota 2';
                 const isLol = selectedGame === 'League of Legends';
                 const isCs2 = selectedGame === 'Counter-Strike 2';
+                const isApex = selectedGame === 'Apex Legends';
                 const roundsWon = log.metrics_payload?.rounds_won ?? log.rounds_won;
                 const roundsLost = log.metrics_payload?.rounds_lost ?? log.rounds_lost;
-                const formattedScore = (isDota || isLol || isCs2)
+                const formattedScore = (isDota || isLol || isCs2 || isApex)
                   ? (log.metrics_payload?.outcome || 'VICTORY')
                   : (roundsWon !== undefined && roundsLost !== undefined) 
                     ? `${roundsWon} - ${roundsLost}` 
@@ -1678,6 +2120,8 @@ export default function GameData() {
                     ? (log.metrics_payload?.champion_name || 'CHAMPION')
                     : isCs2
                     ? (log.metrics_payload?.map_name || log.metrics_payload?.map || 'de_mirage')
+                    : isApex
+                    ? (log.metrics_payload?.placement ? `Placement ${log.metrics_payload.placement}` : 'CHAMPION')
                     : (log.metrics_payload?.map || log.map || 'LOTUS');
                 const agentName = isDota 
                   ? (log.metrics_payload?.team || 'Radiant')
@@ -1685,9 +2129,11 @@ export default function GameData() {
                     ? (log.metrics_payload?.role || 'LANE')
                     : isCs2
                     ? 'Competitive'
+                    : isApex
+                    ? (log.metrics_payload?.legend || 'Wraith')
                     : (log.metrics_payload?.agent || log.agent || 'OMEN');
-                const kdVal = (isDota || isLol || isCs2)
-                  ? (log.metrics_payload?.kda || log.metrics_payload?.kd || 1.0)
+                const kdVal = (isDota || isLol || isCs2 || isApex)
+                  ? (log.metrics_payload?.kd_ratio || log.metrics_payload?.kda || log.metrics_payload?.kd || 1.0)
                   : (log.metrics_payload?.kd || log.metrics_payload?.kd_ratio || log.kd || log.kd_ratio || 1.0);
                 const killsVal = log.metrics_payload?.kills || log.kills || 0;
                 const deathsVal = log.metrics_payload?.deaths || log.deaths || 0;
@@ -1698,6 +2144,8 @@ export default function GameData() {
                     ? (log.metrics_payload?.cs_per_min !== undefined ? `${log.metrics_payload.cs_per_min} CS/M` : (log.metrics_payload?.cs || 0))
                     : isCs2
                     ? (log.metrics_payload?.adr !== undefined ? `${log.metrics_payload.adr} ADR` : 100)
+                    : isApex
+                    ? (log.metrics_payload?.damage !== undefined ? `${log.metrics_payload.damage} DMG` : 1000)
                     : (log.metrics_payload?.acs || log.acs || 210);
                 const hsVal = isDota 
                   ? (log.metrics_payload?.xpm)
@@ -1705,6 +2153,8 @@ export default function GameData() {
                     ? (log.metrics_payload?.vision_score !== undefined ? `${log.metrics_payload.vision_score} VS` : undefined)
                     : isCs2
                     ? (log.metrics_payload?.hs_percent !== undefined ? `${log.metrics_payload.hs_percent}%` : (log.metrics_payload?.hs_percentage !== undefined ? `${log.metrics_payload.hs_percentage}%` : undefined))
+                    : isApex
+                    ? (log.metrics_payload?.rank || 'DIAMOND IV')
                     : (log.metrics_payload?.hs_percentage || log.metrics_payload?.hs_percent || log.hs_percentage || log.hs_percent);
                 const ratingVal = log.performance_score || log.calculated_rating || log.rating || 65.0;
                 const dateVal = new Date(log.created_at || log.match_date || Date.now()).toLocaleDateString();
@@ -1852,65 +2302,55 @@ export default function GameData() {
           </div>
         )}
       </div>
+      )}
 
       {/* --- CUSTOM TELEMETRY STATUS TOAST --- */}
-      {syncToast.show && (
-        <div className="fixed top-6 right-6 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
-          {syncToast.type === 'success' ? (
-            <div className="bg-[#0f1923]/95 border border-cyan-500/50 shadow-[0_0_25px_rgba(6,182,212,0.25)] rounded-xl p-4 min-w-[340px] backdrop-blur-md flex items-start space-x-3.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping mt-1.5 shrink-0" />
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-cyan-400">
-                    {syncToast.title || 'TELEMETRY INGESTED'}
-                  </span>
-                  <button
-                    onClick={() => setSyncToast((prev) => ({ ...prev, show: false }))}
-                    className="text-slate-500 hover:text-slate-300 text-xs transition"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="text-white font-bold text-sm mt-0.5">
-                  Map: <span className="text-cyan-200">{syncToast.map}</span>
-                </div>
-
-                <div className="flex items-center space-x-3 mt-2 pt-2 border-t border-slate-800 text-xs">
-                  <div>
-                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Score</span>
-                    <span className="text-emerald-400 font-extrabold text-sm">{syncToast.score?.toFixed(1)}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 text-[10px] uppercase font-bold block">ACS</span>
-                    <span className="text-slate-200 font-bold">{syncToast.acs}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 text-[10px] uppercase font-bold block">K/D</span>
-                    <span className="text-cyan-400 font-bold">{syncToast.kd?.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-[#1a0f14]/95 border border-rose-500/50 shadow-[0_0_25px_rgba(244,63,94,0.25)] rounded-xl p-4 min-w-[320px] backdrop-blur-md flex items-start space-x-3">
-              <div className="w-2 h-2 rounded-full bg-rose-400 mt-1.5 shrink-0" />
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-rose-400">Sync Notice</span>
-                  <button
-                    onClick={() => setSyncToast((prev) => ({ ...prev, show: false }))}
-                    className="text-slate-500 hover:text-slate-300 text-xs transition"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+      {syncToast && syncToast.show && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-[#0b1320] border border-cyan-500/40 rounded-xl p-4 shadow-2xl flex items-center gap-4 font-mono min-w-[320px] backdrop-blur-md">
+            <div className="w-3 h-3 rounded-full bg-cyan-400 animate-ping shrink-0" />
+            <div className="flex-1">
+              <h5 className="text-xs font-bold text-cyan-300 uppercase">
+                {syncToast.title || 'TELEMETRY RECORDED'}
+              </h5>
+              {syncToast.map && (
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Map/Mode: <span className="text-cyan-200">{syncToast.map}</span>
+                </p>
+              )}
+              {syncToast.message && (
+                <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
                   {syncToast.message}
                 </p>
-              </div>
+              )}
+              {syncToast.kd !== undefined && syncToast.kd !== null && (
+                <span className="text-[10px] text-cyan-400/80 block mt-1">
+                  K/D: {!isNaN(Number(syncToast.kd)) ? Number(syncToast.kd).toFixed(2) : String(syncToast.kd)}
+                </span>
+              )}
+              {syncToast.rating !== undefined && syncToast.rating !== null && !isNaN(Number(syncToast.rating)) && (
+                <span className="text-[10px] text-amber-400 block mt-0.5">
+                  RATING: {Number(syncToast.rating).toFixed(1)}
+                </span>
+              )}
+              {syncToast.score !== undefined && syncToast.score !== null && !isNaN(Number(syncToast.score)) && (
+                <span className="text-[10px] text-emerald-400 block mt-0.5">
+                  SCORE: {Number(syncToast.score).toFixed(1)}
+                </span>
+              )}
+              {syncToast.acs !== undefined && syncToast.acs !== null && (
+                <span className="text-[10px] text-slate-300 block mt-0.5">
+                  STAT: {String(syncToast.acs)}
+                </span>
+              )}
             </div>
-          )}
+            <button
+              onClick={() => setSyncToast((prev) => (prev ? { ...prev, show: false } : null))}
+              className="text-slate-500 hover:text-white text-xs ml-2 transition-colors cursor-pointer border-none bg-transparent"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

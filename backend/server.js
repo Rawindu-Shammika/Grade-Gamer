@@ -727,6 +727,112 @@ app.post('/api/manual-entry-cs2', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// APEX LEGENDS MANUAL TELEMETRY INGESTION ROUTE
+// ----------------------------------------------------
+app.post('/api/manual-entry-apex', async (req, res) => {
+  try {
+    const { userId, playerName, legend, outcome, rankTier, kills, deaths, assists, damage, placement } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required.' });
+    }
+
+    const cleanPlayer = (playerName || 'ApexPlayer').trim();
+    const cleanLegend = (legend || 'Wraith').trim();
+    const cleanOutcome = (outcome || 'CHAMPION').toUpperCase();
+    const cleanRank = (rankTier || 'DIAMOND IV').toUpperCase();
+    
+    const k = parseInt(kills, 10) || 0;
+    const d = Math.max(1, parseInt(deaths, 10) || 1);
+    const a = parseInt(assists, 10) || 0;
+    const dmg = parseInt(damage, 10) || 0;
+    const place = Math.max(1, Math.min(20, parseInt(placement, 10) || 1));
+
+    const kdRatio = parseFloat((k / d).toFixed(2));
+    
+    // Performance Rating (0 - 100 Scale)
+    const combatPts = Math.min(45, (k * 4.0) + (a * 1.5));
+    const damagePts = Math.min(35, (dmg / 3500) * 35);
+    const placePts = Math.max(5, (21 - place) * 1.0);
+    const performanceScore = parseFloat(Math.min(99.0, Math.max(20.0, combatPts + damagePts + placePts)).toFixed(1));
+
+    const payload = {
+      player_name: cleanPlayer,
+      legend: cleanLegend,
+      outcome: cleanOutcome,
+      rank: cleanRank,
+      kills: k,
+      deaths: d,
+      assists: a,
+      kd_ratio: kdRatio,
+      damage: dmg,
+      placement: `#${place}`,
+      ingestion_mode: 'MANUAL_PROTOCOL'
+    };
+
+    // 1. Insert into apex_match_telemetry
+    const { data: inserted, error: insertErr } = await supabase
+      .from('apex_match_telemetry')
+      .insert({
+        user_id: userId,
+        game_title: 'Apex Legends',
+        ingestion_type: 'MANUAL_ENTRY',
+        performance_score: performanceScore,
+        metrics_payload: payload
+      })
+      .select()
+      .single();
+
+    if (insertErr) throw insertErr;
+
+    // 2. Persist Player Handle & Rank to Profiles
+    try {
+      await supabase
+        .from('profiles')
+        .update({
+          apex_player_id: cleanPlayer,
+          apex_rank: cleanRank
+        })
+        .eq('id', userId);
+    } catch (e) {
+      console.warn('[Apex Profile Update Warning]:', e.message);
+    }
+
+    console.log(`✅ Stored Apex Match for ${cleanPlayer} in apex_match_telemetry: ${inserted.id}`);
+    return res.status(200).json({
+      success: true,
+      telemetry: inserted,
+      rating: performanceScore,
+      player: cleanPlayer,
+      rank: cleanRank
+    });
+  } catch (err) {
+    console.error('[Manual Apex Error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to ingest Apex telemetry.' });
+  }
+});
+
+// UNLINK APEX PROFILE
+app.post('/api/unlink-apex', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID is required.' });
+
+    await supabase
+      .from('profiles')
+      .update({
+        apex_player_id: null,
+        apex_rank: 'UNRATED'
+      })
+      .eq('id', userId);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/unlink-game
 app.post('/api/unlink-game', async (req, res) => {
   try {
@@ -752,6 +858,9 @@ app.post('/api/unlink-game', async (req, res) => {
     } else if (key.includes('cs') || key.includes('counter')) {
       profileUpdate = { cs2_steam_id: null, steam_id: null, cs2_rank: 'UNRATED' };
       telemetryTable = 'cs2_match_telemetry';
+    } else if (key.includes('apex')) {
+      profileUpdate = { apex_player_id: null, apex_rank: 'UNRATED' };
+      telemetryTable = 'apex_match_telemetry';
     }
 
     // 1. Update Profile in Supabase safely
