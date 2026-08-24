@@ -190,14 +190,14 @@ export const RootLayout = ({
                   if (onAuthClick) onAuthClick('signin');
                 }
               }}
-              className="w-10 h-10 rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center transition-all cursor-pointer shadow-md overflow-hidden select-none active:scale-95 animate-none"
+              className="w-[44px] h-[44px] rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center transition-all cursor-pointer shadow-md overflow-hidden select-none active:scale-95 animate-none"
             >
               {user ? (
                 <div className="w-full h-full bg-gradient-to-br from-[#00b4d8]/20 to-[#00b4d8]/5 flex items-center justify-center text-[#00b4d8] text-xs font-black font-mono">
                   GG
                 </div>
               ) : (
-                <User className="w-4 h-4 text-slate-400 hover:text-[#00b4d8]" />
+                <User className="w-5 h-5 text-slate-400 hover:text-[#00b4d8]" />
               )}
             </button>
 
