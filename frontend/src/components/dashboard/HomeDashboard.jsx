@@ -6,7 +6,7 @@ import { fetchCurrentValorantAct } from '../../utils/valorantActService';
 import { applyGlobalActReset } from '../../utils/actDataSync';
 import { getDotaHeroName } from '../../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../../utils/dotaStats';
-import { getUiImageUrl } from '../../utils/supabaseAssets';
+import { getBannerImageUrl, SUPABASE_UI_BASE } from '../../utils/supabaseAssets';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -36,10 +36,10 @@ const formatLapTime = (sec) => {
   return `${minutes}:${remainingSec < 10 ? '0' : ''}${remainingSec}`;
 };
 
-// Only using the 2 requested images
+// Verified banner assets with guaranteed local fallbacks
 const DASHBOARD_BANNERS = [
-  'PUBG i.jpg',
-  'APEX iv.jpg',
+  { remote: 'PUBG i.jpg', fallback: '/banners/Valo1.jpg' },
+  { remote: 'APEX iv.jpg', fallback: '/banners/Esports.jpg' },
 ];
 
 // 1. Color Helper for Text, Box Accent, and Dot Glow
@@ -678,19 +678,23 @@ export const HomeDashboard = () => {
         className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
       >
         {/* Animated Background Banner with Top-Focused Framing */}
-        {DASHBOARD_BANNERS.map((banner, index) => (
-          <div
-            key={banner}
-            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
-              index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
-            }`}
-            style={{
-              backgroundImage: `url(${getUiImageUrl(banner)})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center top 15%',
-            }}
-          />
-        ))}
+        {DASHBOARD_BANNERS.map((banner, index) => {
+          const remoteUrl = getBannerImageUrl(banner.remote, banner.fallback);
+          const fallbackUrl = banner.fallback;
+          return (
+            <div
+              key={banner.remote || index}
+              className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
+                index === bannerIndex ? 'opacity-85 scale-100' : 'opacity-0 scale-105'
+              }`}
+              style={{
+                backgroundImage: `linear-gradient(to right, rgba(7, 11, 19, 0.95), rgba(7, 11, 19, 0.65)), url(${remoteUrl}), url(${fallbackUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top 15%',
+              }}
+            />
+          );
+        })}
 
         {/* High-Contrast Cyber Overlay Gradients */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />

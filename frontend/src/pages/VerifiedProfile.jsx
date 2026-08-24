@@ -14,10 +14,12 @@ import { fetchCurrentValorantAct } from '../utils/valorantActService';
 import { applyGlobalActReset } from '../utils/actDataSync';
 import { useMemo } from 'react';
 
-// Only using the 2 requested images
+import { getBannerImageUrl, SUPABASE_UI_BASE } from '../utils/supabaseAssets';
+
+// Verified banner assets with guaranteed local fallbacks
 const RESUME_BANNERS = [
-  'DOTA iii.avif',
-  'APEX ii.jpg',
+  { remote: 'DOTA iii.avif', fallback: '/banners/profile_resume.jpg' },
+  { remote: 'APEX ii.jpg', fallback: '/banners/Esports.jpg' },
 ];
 
 /**
@@ -419,19 +421,23 @@ export const VerifiedProfile = () => {
         className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-6 select-none transition-all"
       >
         {/* Animated Background Banner with Top-Focused Framing */}
-        {RESUME_BANNERS.map((banner, index) => (
-          <div
-            key={banner}
-            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
-              index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
-            }`}
-            style={{
-              backgroundImage: `url(${getUiImageUrl(banner)})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center top 15%',
-            }}
-          />
-        ))}
+        {RESUME_BANNERS.map((banner, index) => {
+          const remoteUrl = getBannerImageUrl(banner.remote, banner.fallback);
+          const fallbackUrl = banner.fallback;
+          return (
+            <div
+              key={banner.remote || index}
+              className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
+                index === bannerIndex ? 'opacity-85 scale-100' : 'opacity-0 scale-105'
+              }`}
+              style={{
+                backgroundImage: `linear-gradient(to right, rgba(7, 11, 19, 0.95), rgba(7, 11, 19, 0.65)), url(${remoteUrl}), url(${fallbackUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top 15%',
+              }}
+            />
+          );
+        })}
 
         {/* High-Contrast Cyber Overlay Gradients */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />

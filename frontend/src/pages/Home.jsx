@@ -2,28 +2,33 @@ import React, { useState, useEffect } from 'react';
 import LandingPage from '../components/home/LandingPage';
 import { Gamepad2, RefreshCw } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
-import { getAssetImageUrl, getUiImageUrl } from '../utils/supabaseAssets';
+
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
+const SUPABASE_ASSETS_BASE = `${cleanUrl}/storage/v1/object/public/assets`;
+
+const SUPABASE_HERO_BASE = `${cleanUrl}/storage/v1/object/public/Hero`;
 
 const HERO_IMAGES = [
-  getUiImageUrl('VALORANT i.jpg'),
-  getUiImageUrl('AC i.jpg'),
-  getUiImageUrl('AC ii.jpg'),
-  getUiImageUrl('DOTA iii.avif'),
-  getUiImageUrl('FC ii.jpg'),
-  getUiImageUrl('PUBG i.jpg'),
-  getUiImageUrl('TEAM i.jpg')
+  `${SUPABASE_HERO_BASE}/VALORANT%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/AC%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/AC%20ii.jpg`,
+  `${SUPABASE_HERO_BASE}/DOTA%20iii.webp`,
+  `${SUPABASE_HERO_BASE}/FC%20ii.jpg`,
+  `${SUPABASE_HERO_BASE}/PUBG%20i.jpg`,
+  `${SUPABASE_HERO_BASE}/OVERWATCH%20ii.webp`
 ];
 
 const SECTION_IMAGES = {
-  performanceTracking: getAssetImageUrl('DASHBOARD.png'),
-  teammateReviews: getAssetImageUrl('TEAMMATES.webp'),
-  rosterManagement: getAssetImageUrl('ROSTER M.avif'),
-  verifiedResumes: getAssetImageUrl('PROFILES.png')
+  performanceTracking: `${SUPABASE_ASSETS_BASE}/DASHBOARD.png?v=${Date.now()}`,
+  teammateReviews: `${SUPABASE_ASSETS_BASE}/TEAMMATES.webp`,
+  rosterManagement: `${SUPABASE_ASSETS_BASE}/ROSTER%20M.avif`,
+  verifiedResumes: `${SUPABASE_ASSETS_BASE}/PROFILES.png`
 };
 
 const getPublicImageUrl = (fileName) => {
   const { data } = supabase.storage.from('assets').getPublicUrl(fileName);
-  return data?.publicUrl || getAssetImageUrl(fileName);
+  return data.publicUrl;
 };
 
 let cachedImages = null;

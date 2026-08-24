@@ -8,9 +8,11 @@ import {
   Sparkles
 } from 'lucide-react';
 
-import { getAssetImageUrl } from '../../utils/supabaseAssets';
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '');
+const SUPABASE_ASSETS_BASE = `${cleanUrl}/storage/v1/object/public/assets`;
 
-const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER M.avif', 'PROFILES.png'];
+const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER%20M.avif', 'PROFILES.png'];
 
 /**
  * LandingPage - Production Presentation Layout (Cleaned)
@@ -21,7 +23,7 @@ const HERO_IMAGES = ['DASHBOARD.png', 'TEAMMATES.webp', 'ROSTER M.avif', 'PROFIL
  * - Top Navigation is moved to the RootLayout.
  */
 export const LandingPage = ({ uiImages, onAuthClick, onDashboardClick, onViewChange, setActiveTab, onNavigate, user, logout, heroBanners }) => {
-  const banners = heroBanners && heroBanners.length > 0 ? heroBanners : HERO_IMAGES.map(img => getAssetImageUrl(img));
+  const banners = heroBanners && heroBanners.length > 0 ? heroBanners : HERO_IMAGES.map(img => `${SUPABASE_ASSETS_BASE}/${img}`);
   const [heroIndex, setHeroIndex] = useState(0);
   const [isFading, setIsFading] = useState(false);
 
@@ -47,7 +49,8 @@ export const LandingPage = ({ uiImages, onAuthClick, onDashboardClick, onViewCha
       return;
     }
     if (typeof window !== 'undefined') {
-      window.location.pathname = path;
+      localStorage.setItem('grade_gamer_active_view', tabKey);
+      localStorage.setItem('gg_active_view', tabKey);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
