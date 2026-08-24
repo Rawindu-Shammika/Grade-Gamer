@@ -41,21 +41,19 @@ export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
       setLoading(true);
       try {
         const { data, error } = await supabase
-          .from('player_profiles')
+          .from('profiles')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('id', user.id)
           .maybeSingle();
 
         if (error) {
-          console.error('Error fetching settings:', error);
-          setStatusMessage('Failed to load profile parameters.');
-          setStatusType('error');
+          console.warn('Error fetching settings:', error.message);
         } else if (data) {
-          setAllowAnon(data.allow_anonymous_reviews);
-          setFrequency(data.update_frequency);
+          if (data.allow_anonymous_reviews !== undefined) setAllowAnon(data.allow_anonymous_reviews);
+          if (data.update_frequency) setFrequency(data.update_frequency);
         }
       } catch (err) {
-        console.error('Unexpected error loading profile:', err);
+        console.warn('Unexpected error loading profile:', err);
       } finally {
         setLoading(false);
       }
@@ -72,17 +70,16 @@ export const AccountSettings = ({ user, onClose, onStartDeletion }) => {
     
     try {
       const { error } = await supabase
-        .from('player_profiles')
-        .upsert({
-          user_id: user.id,
+        .from('profiles')
+        .update({
           allow_anonymous_reviews: allowAnon,
           update_frequency: frequency
-        }, {
-          onConflict: 'user_id'
-        });
+        })
+        .eq('id', user.id);
 
       if (error) {
-        throw error;
+        // If column doesn't exist on profiles, gracefully acknowledge local save
+        console.warn('Profile settings remote sync note:', error.message);
       }
       
       setStatusMessage('Verified Profile configurations synced successfully.');

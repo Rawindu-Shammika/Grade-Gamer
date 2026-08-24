@@ -30,15 +30,15 @@ export const ProfileSettingsModal = ({ user, onClose, onStartDeletion }) => {
       setLoading(true);
       try {
         const { data } = await supabase
-          .from('player_profiles')
+          .from('profiles')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('id', user.id)
           .maybeSingle();
         if (data) {
           setProfile(data);
         }
       } catch (err) {
-        console.error('Failed to load profile settings modal details:', err);
+        console.warn('Failed to load profile settings modal details:', err);
       } finally {
         setLoading(false);
       }

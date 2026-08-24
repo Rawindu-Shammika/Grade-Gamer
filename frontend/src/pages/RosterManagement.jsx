@@ -659,7 +659,7 @@ export const RosterManagement = () => {
   const executeRosterDelete = useCallback(async (rosterId) => {
     try {
       // 1. Delete associated team members first if stored in a relational table
-      await supabase.from('team_rosters').delete().eq('team_id', rosterId);
+      await supabase.from('team_members').delete().eq('team_id', rosterId);
 
       // 2. Delete the main roster entry
       const { error } = await supabase

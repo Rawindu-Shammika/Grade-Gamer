@@ -533,12 +533,11 @@ export default function GameData() {
     setIsLoadingFeed(true);
     try {
       const tableName = getTelemetryTable(selectedGame);
-      const orderBy = tableName === 'game_match_telemetry' ? 'match_date' : 'created_at';
       const { data, error } = await supabase
         .from(tableName)
         .select('*')
         .eq('user_id', user.id)
-        .order(orderBy, { ascending: true });
+        .order('created_at', { ascending: true });
 
       if (!error && data) {
         setMatchHistory(data);

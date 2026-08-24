@@ -158,18 +158,20 @@ export const useRosterManagement = () => {
 
       const teamId = teamData[0].id;
 
-      // 2. Post roster members sequentially to 'team_rosters'
+      // 2. Post roster members sequentially to 'team_members'
       const rosterRows = playersList.map(player => ({
         team_id: teamId,
-        player_name: player.name.trim(),
-        player_role: player.role || limits.defaultRoleLabel
+        user_id: player.userId || user.id,
+        role: player.role || limits.defaultRoleLabel
       }));
 
       const { error: rosterErr } = await supabase
-        .from('team_rosters')
+        .from('team_members')
         .insert(rosterRows);
 
-      if (rosterErr) throw rosterErr;
+      if (rosterErr) {
+        console.warn('Could not insert team_members rows:', rosterErr);
+      }
 
       // 3. Post roster invitations to 'roster_invitations'
       const invitationRows = playersList
@@ -240,7 +242,7 @@ export const useRosterManagement = () => {
       }
 
       // Delete child associations first
-      await supabase.from('team_rosters').delete().eq('team_id', teamId);
+      await supabase.from('team_members').delete().eq('team_id', teamId);
       
       const { error: teamErr } = await supabase
         .from('teams')

@@ -102,12 +102,25 @@ export const VerifiedResumeCard = ({
           .eq('user_id', targetUserId)
           .order('created_at', { ascending: true });
 
-        // Fetch other games matches
-        const { data: otherMatches } = await supabase
-          .from('game_match_telemetry')
+        // Fetch F1 25 matches
+        const { data: f1Matches } = await supabase
+          .from('f1_match_telemetry')
+          .select('*')
+          .order('created_at', { ascending: true });
+
+        // Fetch EA FC 27 matches
+        const { data: fcMatches } = await supabase
+          .from('fc27_match_telemetry')
           .select('*')
           .eq('user_id', targetUserId)
-          .order('match_date', { ascending: true });
+          .order('created_at', { ascending: true });
+
+        // Fetch Apex Legends matches
+        const { data: apexMatches } = await supabase
+          .from('apex_match_telemetry')
+          .select('*')
+          .eq('user_id', targetUserId)
+          .order('created_at', { ascending: true });
 
         const stats = {
           valorant: { hours: 0, slope: 0, matches: 0 },
@@ -117,6 +130,8 @@ export const VerifiedResumeCard = ({
           cs2: { hours: 0, slope: 0, matches: 0 },
           assettoCorsa: { hours: 0, slope: 0, matches: 0 },
           f1_25: { hours: 0, slope: 0, matches: 0 },
+          fc27: { hours: 0, slope: 0, matches: 0 },
+          apex: { hours: 0, slope: 0, matches: 0 },
         };
 
         const processGameMatches = (matchesList, gameKey) => {
@@ -179,19 +194,10 @@ export const VerifiedResumeCard = ({
         processGameMatches(valMatches, 'valorant');
         processGameMatches(dotaMatches, 'dota2');
         processGameMatches(lolMatches, 'league_of_legends');
-
-        const matchesByGame = {};
-        if (otherMatches) {
-          otherMatches.forEach((m) => {
-            const title = m.game_title || '';
-            if (!matchesByGame[title]) matchesByGame[title] = [];
-            matchesByGame[title].push(m);
-          });
-        }
-
-        processGameMatches(cs2Matches && cs2Matches.length > 0 ? cs2Matches : matchesByGame['Counter-Strike 2'], 'cs2');
-        processGameMatches(matchesByGame['Assetto Corsa'], 'assettoCorsa');
-        processGameMatches(matchesByGame['F1 25'], 'f1_25');
+        processGameMatches(cs2Matches, 'cs2');
+        processGameMatches(f1Matches, 'f1_25');
+        processGameMatches(fcMatches, 'fc27');
+        processGameMatches(apexMatches, 'apex');
 
         setGameStats(stats);
       } catch (err) {

@@ -76,7 +76,7 @@ export const RootLayout = ({
         const { error } = await supabase.rpc('delete_user_account');
         if (error) {
           console.warn('RPC delete_user_account failed, executing manual fallback:', error);
-          await supabase.from('player_profiles').delete().eq('user_id', user.id);
+          await supabase.from('profiles').delete().eq('id', user.id);
           await supabase.from('teams').delete().eq('user_id', user.id);
         }
         await supabase.auth.signOut();
