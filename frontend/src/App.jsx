@@ -386,7 +386,12 @@ function App() {
       )}
 
       {currentView === 'dashboard' && user && (
-        <Dashboard session={user} logout={logout} />
+        <Dashboard 
+          session={user} 
+          logout={logout} 
+          onViewChange={handleViewChange} 
+          onNavigate={handleViewChange} 
+        />
       )}
 
       {currentView === 'auth' && (

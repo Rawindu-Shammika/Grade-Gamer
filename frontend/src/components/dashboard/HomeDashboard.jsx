@@ -155,7 +155,7 @@ const getTelemetryTable = (gameKey) => {
   return 'valorant_match_telemetry';
 };
 
-export const HomeDashboard = () => {
+export const HomeDashboard = ({ onNavigate, onViewChange }) => {
   const { user, profile } = useAuth();
   const [activeTitles, setActiveTitles] = useState(() => (
     profile?.esports_titles?.length 
@@ -163,8 +163,31 @@ export const HomeDashboard = () => {
       : (profile?.active_titles?.length ? profile.active_titles : ['Valorant', 'League of Legends', 'Dota 2', 'Counter-Strike 2', 'Assetto Corsa', 'F1 25'])
   ));
 
-  const [selectedGame, setSelectedGame] = useState('Valorant');
+  const [selectedGame, setSelectedGame] = useState(() => (
+    localStorage.getItem('grade_gamer_active_game') || 'Valorant'
+  ));
   const [actInfo, setActInfo] = useState(null);
+
+  const handleGameSelect = (game) => {
+    setSelectedGame(game);
+    localStorage.setItem('grade_gamer_active_game', game);
+  };
+
+  const handleManageNode = (gameTitle) => {
+    const targetGame = gameTitle || selectedGame || 'Valorant';
+    // Save selected game so GameData.jsx initializes with this title
+    localStorage.setItem('grade_gamer_active_game', targetGame);
+    
+    // Navigate to Game Data view
+    if (typeof onNavigate === 'function') {
+      onNavigate('game-data');
+    } else if (typeof onViewChange === 'function') {
+      onViewChange('game-data');
+    } else {
+      localStorage.setItem('grade_gamer_active_view', 'game-data');
+      window.location.href = '/game-data';
+    }
+  };
 
   useEffect(() => {
     if (profile?.esports_titles?.length) {
@@ -745,7 +768,7 @@ export const HomeDashboard = () => {
         <div className="relative min-w-[220px] sm:w-72">
           <select
             value={selectedGame}
-            onChange={(e) => setSelectedGame(e.target.value)}
+            onChange={(e) => handleGameSelect(e.target.value)}
             className="w-full bg-[#070b10] border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-400 text-white text-xs font-mono font-bold uppercase tracking-wider py-3 pl-4 pr-10 rounded-xl appearance-none cursor-pointer focus:outline-none transition shadow-lg"
           >
             {activeTitles && activeTitles.length > 0 ? (
@@ -792,12 +815,13 @@ export const HomeDashboard = () => {
             <span className="text-xs text-slate-400">
               BADGE: <span className="text-cyan-400 font-bold">{boundHandle}</span>
             </span>
-            <a 
-              href="/game-data"
-              className="bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black px-4 py-2 rounded-lg uppercase tracking-wider transition shadow-[0_0_12px_rgba(6,182,212,0.3)]"
+            <button 
+              type="button"
+              onClick={() => handleManageNode(selectedGame)}
+              className="bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs uppercase tracking-wider px-4 py-2 rounded-lg transition-colors duration-200 cursor-pointer border-none shadow-[0_0_12px_rgba(6,182,212,0.3)]"
             >
-              Manage Node
-            </a>
+              MANAGE NODE
+            </button>
           </div>
         </div>
 
