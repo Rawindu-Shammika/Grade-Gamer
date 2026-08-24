@@ -37,7 +37,7 @@ export const useEsportsEcosystem = (activeSelectedGame) => {
       // 2. Fetch all teams created by user ordered by latest
       const { data: createdTeams, error: createdErr } = await supabase
         .from('teams')
-        .select('*, team_rosters(*)')
+        .select('*, team_members(*)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -56,23 +56,23 @@ export const useEsportsEcosystem = (activeSelectedGame) => {
           targetTeam = createdTeams[0];
         }
       } else {
-        // Priority C: Query team_rosters for user's name membership
-        const { data: rosterMemberships, error: rosterErr } = await supabase
-          .from('team_rosters')
+        // Priority C: Query team_members for user's membership
+        const { data: memberRows, error: memberErr } = await supabase
+          .from('team_members')
           .select('*, teams(*)')
-          .ilike('player_name', `%${firstName}%`);
+          .eq('user_id', user.id);
 
-        if (rosterErr) throw rosterErr;
+        if (memberErr) throw memberErr;
 
-        if (rosterMemberships && rosterMemberships.length > 0) {
-          const matched = rosterMemberships.find(
+        if (memberRows && memberRows.length > 0) {
+          const matched = memberRows.find(
             (m) => m.teams && m.teams.game_title?.toLowerCase() === activeSelectedGame?.toLowerCase()
-          ) || rosterMemberships[0];
+          ) || memberRows[0];
 
           if (matched && matched.teams) {
             const { data: fullTeam, error: fullTeamErr } = await supabase
               .from('teams')
-              .select('*, team_rosters(*)')
+              .select('*, team_members(*)')
               .eq('id', matched.team_id)
               .maybeSingle();
 
@@ -87,12 +87,12 @@ export const useEsportsEcosystem = (activeSelectedGame) => {
         setCurrentActiveRoster(targetTeam);
 
         // Find logged in user's role inside the roster
-        const selfMember = targetTeam.team_rosters?.find(
-          (m) => m.player_name.toLowerCase().includes(firstName)
-        ) || targetTeam.team_rosters?.[0];
+        const selfMember = targetTeam.team_members?.find(
+          (m) => m.user_id === user.id
+        ) || targetTeam.team_members?.[0];
         
-        if (selfMember && selfMember.player_role) {
-          setUserRole(selfMember.player_role);
+        if (selfMember && selfMember.role) {
+          setUserRole(selfMember.role);
         } else {
           setUserRole(targetTeam.game_title === 'F1 25' ? 'Main Driver' : 'In Game Leader IGL');
         }

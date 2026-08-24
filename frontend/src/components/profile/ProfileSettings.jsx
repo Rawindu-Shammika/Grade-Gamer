@@ -26,22 +26,22 @@ export const ProfileSettings = ({ user }) => {
       setLoading(true);
       try {
         const { data } = await supabase
-          .from('player_profiles')
+          .from('profiles')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('id', user.id)
           .maybeSingle();
 
         if (data) {
-          setAllowAnon(data.allow_anonymous_reviews);
-          setFrequency(data.update_frequency);
-          setSelectedGenres(data.registered_genres || []);
+          if (data.allow_anonymous_reviews !== undefined) setAllowAnon(data.allow_anonymous_reviews);
+          if (data.update_frequency) setFrequency(data.update_frequency);
+          setSelectedGenres(data.registered_genres || data.esports_titles || data.active_titles || []);
         } else {
           // If no row exists, fallback to metadata values
           const initialGenres = user.user_metadata?.titles || [];
           setSelectedGenres(initialGenres);
         }
       } catch (err) {
-        console.error('Unexpected error loading profile overview:', err);
+        console.warn('Unexpected error loading profile overview:', err);
       } finally {
         setLoading(false);
       }

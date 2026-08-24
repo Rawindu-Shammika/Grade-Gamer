@@ -71,7 +71,7 @@ export const usePeerReviews = () => {
       const { data: userReviews, error } = await supabase
         .from('peer_reviews')
         .select('target_user_id')
-        .eq('submitted_by_uid', user.id)
+        .eq('reviewer_id', user.id)
         .eq('game_title', selectedTitle);
 
       if (error) throw error;

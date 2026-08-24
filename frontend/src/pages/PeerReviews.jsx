@@ -100,14 +100,23 @@ export const PeerReviews = () => {
         .from('match_lineup')
         .select(`
           match_id,
-          roster_matches!inner(id, game_title, status, completed_at, created_at)
+          roster_matches:match_id(id, game_title, status, completed_at, created_at)
         `)
-        .eq('user_id', user.id)
-        .eq('roster_matches.status', 'COMPLETED')
-        .eq('roster_matches.game_title', selectedTitle || 'Valorant')
-        .order('roster_matches(completed_at)', { ascending: false });
+        .eq('user_id', user.id);
 
-      if (matchErr || !userMatches || userMatches.length === 0) {
+      const targetTitleLower = (selectedTitle || 'Valorant').toLowerCase();
+      const completedGameMatches = (userMatches || [])
+        .filter((m) => {
+          const rm = m.roster_matches;
+          return rm && rm.status === 'COMPLETED' && String(rm.game_title || '').toLowerCase() === targetTitleLower;
+        })
+        .sort((a, b) => {
+          const tA = new Date(a.roster_matches?.completed_at || a.roster_matches?.created_at || 0).getTime();
+          const tB = new Date(b.roster_matches?.completed_at || b.roster_matches?.created_at || 0).getTime();
+          return tB - tA;
+        });
+
+      if (matchErr || completedGameMatches.length === 0) {
         setMyRatingData({
           average: 5.0,
           totalReviews: 0,
@@ -120,11 +129,11 @@ export const PeerReviews = () => {
       }
 
       // Determine current 5-match batch (takes the most recent 1 to 5 matches in the current block)
-      const totalCompletedMatches = userMatches.length;
+      const totalCompletedMatches = completedGameMatches.length;
       const matchCountInCycle = (totalCompletedMatches % 5) === 0 && totalCompletedMatches > 0 ? 5 : (totalCompletedMatches % 5);
       
       // Slice only the matches belonging to the current 5-match cycle window
-      const currentWindowMatchIds = userMatches
+      const currentWindowMatchIds = completedGameMatches
         .slice(0, matchCountInCycle)
         .map((m) => m.match_id);
 
@@ -138,12 +147,15 @@ export const PeerReviews = () => {
       // Check if user is an IGL in any of their current teams for the selected title
       const { data: userRoleData } = await supabase
         .from('team_members')
-        .select('role, is_leader, is_captain, teams!inner(game_title)')
-        .eq('user_id', user.id)
-        .eq('teams.game_title', selectedTitle);
+        .select('role, teams:team_id(id, team_name, game_title)')
+        .eq('user_id', user.id);
 
       const isCurrentUserIGL = userRoleData?.some(
-        (r) => r.is_leader || r.is_captain || String(r.role).toUpperCase().includes('IGL') || String(r.role).toUpperCase().includes('CAPTAIN')
+        (r) => String(r.teams?.game_title || '').toLowerCase() === targetTitleLower && (
+          String(r.role || '').toUpperCase().includes('IGL') ||
+          String(r.role || '').toUpperCase().includes('CAPTAIN') ||
+          String(r.role || '').toUpperCase().includes('LEADER')
+        )
       ) || false;
 
       if (!revErr && reviews && reviews.length > 0) {
@@ -233,13 +245,18 @@ export const PeerReviews = () => {
       // 1. Get the latest completed match for this game that the user was in
       const { data: userMatches } = await supabase
         .from('match_lineup')
-        .select('match_id, roster_matches!inner(id, event_name, event_type, status, game_title)')
-        .eq('user_id', user.id)
-        .eq('roster_matches.status', 'COMPLETED')
-        .eq('roster_matches.game_title', activeGame)
-        .order('created_at', { ascending: false });
+        .select('match_id, roster_matches:match_id(id, event_name, event_type, status, game_title, created_at)')
+        .eq('user_id', user.id);
 
-      const latestUserMatch = userMatches?.[0]?.roster_matches;
+      const targetGameLower = (activeGame || '').toLowerCase();
+      const validCompletedMatches = (userMatches || [])
+        .filter((m) => {
+          const rm = m.roster_matches;
+          return rm && rm.status === 'COMPLETED' && String(rm.game_title || '').toLowerCase() === targetGameLower;
+        })
+        .sort((a, b) => new Date(b.roster_matches?.created_at || 0) - new Date(a.roster_matches?.created_at || 0));
+
+      const latestUserMatch = validCompletedMatches[0]?.roster_matches;
 
       for (const teammate of teammates) {
         const targetUserId = teammate.user_id || teammate.id;

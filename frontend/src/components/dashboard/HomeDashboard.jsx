@@ -423,19 +423,11 @@ export const HomeDashboard = ({ onNavigate, onViewChange }) => {
 
         // Fetch matches from telemetry table dynamically
         const tableName = getTelemetryTable(selectedGame);
-        let query = supabase
+        const { data: matches, error } = await supabase
           .from(tableName)
           .select('*')
-          .eq('user_id', user.id);
-          
-        if (tableName === 'game_match_telemetry') {
-          query = query.eq('game_title', selectedGame);
-        }
-
-        const { data: matches, error } = await query.order(
-          tableName === 'game_match_telemetry' ? 'match_date' : 'created_at', 
-          { ascending: false }
-        );
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
 
         if (isMounted) {
           if (!error && matches) {
