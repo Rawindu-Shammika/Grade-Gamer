@@ -7,7 +7,9 @@ export default function AboutGradeGamer({ onViewChange }) {
       onViewChange(tabKey);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (typeof window !== 'undefined') {
-      window.location.pathname = path;
+      localStorage.setItem('grade_gamer_active_view', tabKey);
+      localStorage.setItem('gg_active_view', tabKey);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 

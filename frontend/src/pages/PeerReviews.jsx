@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import usePeerReviews from '../hooks/usePeerReviews';
 import { Star, ShieldAlert, CheckCircle, Users, Gamepad2, ArrowRight, Lock, AlertTriangle } from 'lucide-react';
-import { getUiImageUrl } from '../utils/supabaseAssets';
+import { getBannerImageUrl, getUiImageUrl, SUPABASE_UI_BASE } from '../utils/supabaseAssets';
 import useAuth from '../hooks/useAuth';
 import { supabase } from '../services/supabaseClient';
 
-const PEER_REVIEW_BANNERS = ['TEAM i.jpg', 'TEAM ii.png'];
+const PEER_REVIEW_BANNERS = [
+  { remote: 'TEAM i.jpg', fallback: '/banners/Esports.jpg' },
+  { remote: 'TEAM ii.png', fallback: '/banners/Valo1.jpg' }
+];
 
 const GAME_ART_MAP = {
   'F1 25': {
@@ -391,19 +394,23 @@ export const PeerReviews = () => {
         className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
       >
         {/* Animated Background Banner with Top-Focused Framing */}
-        {PEER_REVIEW_BANNERS.map((banner, index) => (
-          <div 
-            key={banner}
-            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
-              index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
-            }`}
-            style={{ 
-              backgroundImage: `url(${getUiImageUrl(banner)})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center top 15%'
-            }}
-          />
-        ))}
+        {PEER_REVIEW_BANNERS.map((banner, index) => {
+          const remoteUrl = getBannerImageUrl(banner.remote, banner.fallback);
+          const fallbackUrl = banner.fallback;
+          return (
+            <div 
+              key={banner.remote || index}
+              className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
+                index === bannerIndex ? 'opacity-85 scale-100' : 'opacity-0 scale-105'
+              }`}
+              style={{ 
+                backgroundImage: `linear-gradient(to right, rgba(7, 11, 19, 0.95), rgba(7, 11, 19, 0.65)), url(${remoteUrl}), url(${fallbackUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top 15%'
+              }}
+            />
+          );
+        })}
 
         {/* High-Contrast Cyber Overlay Gradients */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />

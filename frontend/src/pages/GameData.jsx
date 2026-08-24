@@ -8,7 +8,7 @@ import { syncDota2Account } from '../services/dotaSyncService';
 import { syncLolAccount } from '../services/lolSyncService';
 import { getDotaHeroName } from '../utils/dotaHeroes';
 import { calculateDotaLinearGrowth } from '../utils/dotaStats';
-import { getUiImageUrl } from '../utils/supabaseAssets';
+import { getBannerImageUrl, SUPABASE_UI_BASE } from '../utils/supabaseAssets';
 
 export const AUTOMATED_GAMES = [
   'Valorant',
@@ -36,10 +36,10 @@ export const MANUAL_GAMES = [
   'EA FC 27'
 ];
 
-// Only using the 2 requested images
+// Verified banner assets with guaranteed local fallbacks
 const GAMEDATA_BANNERS = [
-  'LOL i.jpg',
-  'PUBG ii.jpg',
+  { remote: 'LOL i.jpg', fallback: '/banners/Esports.jpg' },
+  { remote: 'PUBG ii.jpg', fallback: '/banners/cs2.jpg' },
 ];
 
 const formatLapTime = (sec) => {
@@ -1102,18 +1102,23 @@ export default function GameData() {
         className="relative w-full min-h-[320px] md:min-h-[400px] rounded-3xl overflow-hidden border border-slate-800 bg-[#070b13] shadow-2xl cursor-pointer group mb-8 select-none transition-all"
       >
         {/* Animated Background Carousel */}
-        {GAMEDATA_BANNERS.map((banner, index) => (
-          <div
-            key={banner}
-            className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${index === bannerIndex ? 'opacity-80 scale-100' : 'opacity-0 scale-105'
+        {GAMEDATA_BANNERS.map((banner, index) => {
+          const remoteUrl = getBannerImageUrl(banner.remote, banner.fallback);
+          const fallbackUrl = banner.fallback;
+          return (
+            <div
+              key={banner.remote || index}
+              className={`w-full h-full object-cover absolute inset-0 transition-all duration-1000 ease-in-out pointer-events-none transform group-hover:scale-102 ${
+                index === bannerIndex ? 'opacity-85 scale-100' : 'opacity-0 scale-105'
               }`}
-            style={{
-              backgroundImage: `url(${getUiImageUrl(banner)})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center top 15%',
-            }}
-          />
-        ))}
+              style={{
+                backgroundImage: `linear-gradient(to right, rgba(7, 11, 19, 0.95), rgba(7, 11, 19, 0.65)), url(${remoteUrl}), url(${fallbackUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top 15%',
+              }}
+            />
+          );
+        })}
 
         {/* High-Contrast Cyber Overlay Gradients */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b13]/95 via-[#070b13]/70 to-transparent pointer-events-none" />

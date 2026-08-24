@@ -22,64 +22,20 @@ import {
   AlertCircle
 } from 'lucide-react';
 
-// Pathname to View mapper
-const getViewFromPath = (path) => {
-  if (!path || typeof path !== 'string') return 'home';
-  const normalized = path.replace(/^\//, '').toLowerCase().trim();
-  switch (normalized) {
-    case 'dashboard':
-      return 'dashboard';
-    case 'game-data':
-    case 'gamedata':
-      return 'game-data';
-    case 'peer-reviews':
-    case 'reviews':
-      return 'reviews';
-    case 'verified-resume':
-    case 'verified-resumes':
-    case 'profile':
-      return 'profile';
-    case 'roster-management':
-    case 'rosters':
-      return 'rosters';
-    case 'messages':
-      return 'messages';
-    case 'about':
-      return 'about';
-    case 'auth':
-    case 'signin':
-    case 'login':
-      return 'auth';
-    case 'register':
-    case 'signup':
-      return 'register';
-    case '':
-    case 'home':
-    default:
-      return 'home';
-  }
-};
-
-const pathToViewMap = {
-  home: '/',
-  dashboard: '/dashboard',
-  'game-data': '/game-data',
-  reviews: '/peer-reviews',
-  profile: '/verified-resume',
-  rosters: '/roster-management',
-  messages: '/messages',
-  about: '/about',
-  auth: '/auth',
-  register: '/register'
-};
-
 function App() {
   const { user, profile, refreshProfile, loading, error, login, register, logout, setError, deleteAccount } = useAuth();
   
-  // Initial state from current URL
-  const [view, setView] = useState(() => {
+  // 1. Initial State from localStorage (Pure LocalStorage View Routing)
+  const [currentView, setCurrentView] = useState(() => {
     if (typeof window !== 'undefined') {
-      return getViewFromPath(window.location.pathname);
+      const saved = localStorage.getItem('grade_gamer_active_view') || localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
+      if (saved) {
+        if (saved === 'peer-reviews' || saved === 'reviews') return 'reviews';
+        if (saved === 'roster-management' || saved === 'rosters') return 'rosters';
+        if (saved === 'verified-resume' || saved === 'verified-resumes' || saved === 'profile') return 'profile';
+        if (saved === 'game-data' || saved === 'gamedata') return 'game-data';
+        return saved;
+      }
     }
     return 'home';
   });
@@ -87,30 +43,26 @@ function App() {
   // Tab control: 'signin' | 'signup'
   const [activeTab, setActiveTab] = useState('signin');
 
-  // Unified view and URL updater
-  const updateView = (newView) => {
-    const targetView = newView;
-    const targetPath = pathToViewMap[targetView] || '/';
-
-    if (typeof window !== 'undefined' && window.location.pathname !== targetPath) {
-      window.history.pushState({}, '', targetPath);
+  // 2. View switch handler that persists state purely via localStorage
+  const handleViewChange = (newView) => {
+    let targetView = newView;
+    if (newView === 'peer-reviews' || newView === 'reviews') {
+      targetView = 'reviews';
+    } else if (newView === 'roster-management' || newView === 'rosters') {
+      targetView = 'rosters';
+    } else if (newView === 'verified-resume' || newView === 'verified-resumes' || newView === 'profile') {
+      targetView = 'profile';
+    } else if (newView === 'game-data' || newView === 'gamedata') {
+      targetView = 'game-data';
     }
 
-    setView(targetView);
-    localStorage.setItem('gg_active_view', targetView);
-    localStorage.setItem('activeView', targetView);
-  };
-
-  // Listen for browser Back/Forward navigation
-  useEffect(() => {
+    setCurrentView(targetView);
     if (typeof window !== 'undefined') {
-      const handlePopState = () => {
-        setView(getViewFromPath(window.location.pathname));
-      };
-      window.addEventListener('popstate', handlePopState);
-      return () => window.removeEventListener('popstate', handlePopState);
+      localStorage.setItem('grade_gamer_active_view', targetView);
+      localStorage.setItem('gg_active_view', targetView);
+      localStorage.setItem('activeView', targetView);
     }
-  }, []);
+  };
 
   const [pendingInvites, setPendingInvites] = useState([]);
   const [notificationStatus, setNotificationStatus] = useState(null);
@@ -214,24 +166,20 @@ function App() {
   }, [user]);
 
   // Auto route transitions
-  useEffect(() => {
+  React.useEffect(() => {
     if (loading) return;
 
     if (user) {
-      // Prioritize current browser URL path
-      const currentUrlPath = typeof window !== 'undefined' ? window.location.pathname : '/';
-      const currentUrlView = getViewFromPath(currentUrlPath);
-
-      if (currentUrlView === 'auth' || currentUrlView === 'register') {
-        updateView('dashboard');
-      } else if (currentUrlView && currentUrlView !== 'home') {
-        setView(currentUrlView);
+      const saved = localStorage.getItem('grade_gamer_active_view') || localStorage.getItem('gg_active_view') || localStorage.getItem('activeView');
+      if (saved && saved !== 'auth' && saved !== 'home') {
+        handleViewChange(saved);
+      } else if (currentView === 'auth') {
+        handleViewChange('dashboard');
       }
     } else {
-      // If user is logged out, restrict protected views to 'home'
-      const publicViews = ['home', 'auth', 'about', 'register'];
-      if (!publicViews.includes(view)) {
-        updateView('home');
+      // If user is logged out, restrict to 'home', 'auth', 'about', or 'register'
+      if (currentView !== 'home' && currentView !== 'auth' && currentView !== 'about' && currentView !== 'register') {
+        handleViewChange('home');
       }
     }
   }, [user, loading]);
@@ -358,18 +306,18 @@ function App() {
       refreshProfile={refreshProfile}
       logout={logout}
       deleteAccount={deleteAccount}
-      activeView={view}
+      activeView={currentView}
       onViewChange={(newView) => {
         if (!user && newView !== 'home') {
           setActiveTab('signin');
-          updateView('auth');
+          handleViewChange('auth');
         } else {
-          updateView(newView);
+          handleViewChange(newView);
         }
       }}
       onAuthClick={(mode) => {
         setActiveTab(mode);
-        updateView('auth');
+        handleViewChange('auth');
       }}
     >
       {/* Sleek UI Toast notification */}
@@ -413,31 +361,31 @@ function App() {
 
 
 
-      {view === 'home' && (
+      {currentView === 'home' && (
         <Home 
           user={user}
           logout={logout}
           onAuthClick={(mode) => {
             setActiveTab(mode);
-            updateView('auth');
+            handleViewChange('auth');
           }}
           onDashboardClick={() => {
             if (user) {
-              updateView('dashboard');
+              handleViewChange('dashboard');
             } else {
               setActiveTab('signin');
-              updateView('auth');
+              handleViewChange('auth');
             }
           }}
-          onViewChange={updateView}
+          onViewChange={handleViewChange}
         />
       )}
 
-      {view === 'dashboard' && user && (
+      {currentView === 'dashboard' && user && (
         <Dashboard session={user} logout={logout} />
       )}
 
-      {view === 'auth' && (
+      {currentView === 'auth' && (
         <div className={`flex-grow flex items-center justify-center relative z-10 px-6 pt-28 pb-12 ${canvasBgClass}`}>
           {/* Ambient background glows */}
           <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-gradient-to-br from-[#00b4d8]/10 to-transparent blur-[120px] pointer-events-none z-0"></div>
@@ -512,7 +460,7 @@ function App() {
                   New to GradeGamer?{' '}
                   <button
                     type="button"
-                    onClick={() => updateView('register')}
+                    onClick={() => handleViewChange('register')}
                     className="text-[#00b4d8] hover:underline font-bold bg-transparent border-none cursor-pointer"
                   >
                     Create an Account
@@ -524,7 +472,7 @@ function App() {
         </div>
       )}
 
-      {view === 'register' && (
+      {currentView === 'register' && (
         <div className={`flex-grow flex items-center justify-center relative z-10 px-6 pt-28 pb-12 ${canvasBgClass}`}>
           <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-gradient-to-br from-[#00b4d8]/10 to-transparent blur-[120px] pointer-events-none z-0"></div>
           <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-gradient-to-tl from-amber-500/5 to-transparent blur-[120px] pointer-events-none z-0"></div>
@@ -664,7 +612,7 @@ function App() {
                 <p className="text-xs text-slate-400">
                   Already registered?{' '}
                   <button
-                    onClick={() => { updateView('auth'); setActiveTab('signin'); }}
+                    onClick={() => { handleViewChange('auth'); setActiveTab('signin'); }}
                     className="text-[#00b4d8] hover:underline font-bold bg-transparent border-none cursor-pointer"
                   >
                     Sync Portal Credentials
@@ -713,7 +661,7 @@ function App() {
               <button
                 onClick={() => {
                   setShowRevealModal(false);
-                  updateView('dashboard');
+                  handleViewChange('dashboard');
                 }}
                 className="w-full bg-[#00b4d8] hover:bg-[#00d8f6] text-slate-950 font-black py-3.5 px-6 rounded-xl text-xs uppercase tracking-widest transition-all shadow-md cursor-pointer border-none"
               >
@@ -725,27 +673,27 @@ function App() {
       )}
 
       {/* Fallback route handles for tabs in progress */}
-      {view === 'reviews' && user && (
+      {currentView === 'reviews' && user && (
         <PeerReviews />
       )}
 
-      {view === 'rosters' && user && (
+      {currentView === 'rosters' && user && (
         <RosterManagement />
       )}
 
-      {view === 'profile' && user && (
+      {currentView === 'profile' && user && (
         <VerifiedProfile />
       )}
 
-      {view === 'messages' && user && (
+      {currentView === 'messages' && user && (
         <Messages currentUser={user} />
       )}
 
-      {view === 'about' && (
-        <AboutGradeGamer onViewChange={updateView} />
+      {currentView === 'about' && (
+        <AboutGradeGamer onViewChange={handleViewChange} />
       )}
 
-      {view === 'game-data' && user && (
+      {currentView === 'game-data' && user && (
         <GameData />
       )}
 
