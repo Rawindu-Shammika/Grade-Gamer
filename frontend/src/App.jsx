@@ -497,7 +497,7 @@ function App() {
                   <input
                     type="text"
                     required
-                    placeholder="Rawindu De Silva"
+                    placeholder="e.g. Alex Morgan"
                     value={registerForm.fullName}
                     onChange={(e) => setRegisterForm({ ...registerForm, fullName: e.target.value })}
                     className={inputClass}
@@ -509,7 +509,7 @@ function App() {
                   <input
                     type="text"
                     required
-                    placeholder="Rawindu_IGL"
+                    placeholder="e.g. Phoenix_V"
                     value={registerForm.inGameName}
                     onChange={(e) => setRegisterForm({ ...registerForm, inGameName: e.target.value })}
                     className={inputClass}
@@ -521,7 +521,7 @@ function App() {
                   <input
                     type="email"
                     required
-                    placeholder="gamer@gradegamer.edu"
+                    placeholder="name@example.com"
                     value={registerForm.email}
                     onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
                     className={inputClass}
@@ -533,7 +533,7 @@ function App() {
                   <input
                     type="password"
                     required
-                    placeholder="••••••••••••"
+                    placeholder="Create a secure password"
                     value={registerForm.password}
                     onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
                     className={inputClass}
@@ -545,7 +545,7 @@ function App() {
                   <input
                     type="tel"
                     required
-                    placeholder="+94 77 123 4567"
+                    placeholder="+1 234 567 8900"
                     value={registerForm.phone}
                     onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })}
                     className={inputClass}
@@ -557,7 +557,7 @@ function App() {
                   <input
                     type="text"
                     required
-                    placeholder="Colombo, Sri Lanka"
+                    placeholder="City, Country"
                     value={registerForm.address}
                     onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })}
                     className={inputClass}
